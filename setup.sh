@@ -1,41 +1,24 @@
 #!/usr/bin/env bash
-# 서버 1회 세팅: (저메모리 대비)스왑 → 필요한 패키지만 설치 → 코드 → 파이썬 환경
+# 서버 1회 세팅 (dnf 없이 — 1GB 머신에서도 가볍고 빠르게)
+# Oracle Linux 9 에는 python3 가 기본 설치돼 있고, 코드는 git 대신 curl 로 받는다.
 set -e
 
-# ── 1GB 머신 대비: 2G 스왑 없으면 추가 (dnf OOM 방지) ──
-if ! sudo swapon --show 2>/dev/null | grep -q .; then
-  echo "[setup] 스왑 2G 추가..."
-  if [ ! -f /swapfile ]; then
-    sudo fallocate -l 2G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
-    sudo chmod 600 /swapfile
-    sudo mkswap /swapfile >/dev/null
-  fi
-  sudo swapon /swapfile 2>/dev/null || true
-fi
-
-# ── 이미 있는 건 건너뛰고 없는 것만 설치 ──
-need=""
-command -v git >/dev/null 2>&1 || need="$need git"
-command -v python3 >/dev/null 2>&1 || need="$need python3"
-python3 -m pip --version >/dev/null 2>&1 || need="$need python3-pip"
-if [ -n "$need" ]; then
-  echo "[setup] 패키지 설치:$need"
-  sudo dnf install -y $need
-else
-  echo "[setup] git/python3/pip 이미 설치됨 — 건너뜀"
-fi
-
 cd ~
-echo "[setup] 코드 받기..."
-rm -rf stock-screener
-git clone https://github.com/ssungki/stock-screener.git
+echo "[1/4] 코드 내려받기 (curl tarball)..."
+rm -rf stock-screener stock-screener-master
+curl -sL https://github.com/ssungki/stock-screener/archive/refs/heads/master.tar.gz | tar xz
+mv stock-screener-master stock-screener
 cd stock-screener
 
-echo "[setup] 파이썬 환경 구성..."
+echo "[2/4] 파이썬 가상환경 만들기..."
 python3 -m venv .venv
+
+echo "[3/4] 의존성 설치 (requests, websocket-client)..."
+.venv/bin/python -m ensurepip --upgrade >/dev/null 2>&1 || true
 .venv/bin/pip install -q -U pip
 .venv/bin/pip install -q -r requirements.txt
 
+echo "[4/4] .env 준비..."
 [ -f .env ] || cp .env.example .env
 
 echo ""
