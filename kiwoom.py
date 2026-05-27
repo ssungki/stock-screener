@@ -133,8 +133,8 @@ def probe(token):
     for r in rows[:5]:
         print("  ", {k: r.get(k) for k in ("now_rank", "stk_cd", "stk_nm", "cur_prc")}, flush=True)
 
-    if rows:
-        code = (rows[0].get("stk_cd") or "").lstrip("A")
+    code = (rows[0].get("stk_cd") or "").lstrip("A") if rows else "005930"  # 장마감 등으로 비면 삼성전자로 차트 형식 확인
+    if True:
         print(f"\n── 일봉(ka10081) {code} ──", flush=True)
         dd = _post(CHART_EP, "ka10081", token, {"stk_cd": code, "base_dt": "", "upd_stkpc_tp": "1"})
         print("keys:", list(dd.keys()), flush=True)
