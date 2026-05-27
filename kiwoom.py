@@ -79,22 +79,23 @@ def _to_num(v):
 
 # ─────────────────── 거래대금 상위 (ka10032) ───────────────────
 def fetch_top_value_codes(token, count=100):
-    """거래대금 상위 종목코드 리스트(상위→하위). 최대 count개."""
+    """거래대금 상위 (종목코드, 종목명) 리스트(상위→하위). 최대 count개."""
     d = _post(RANK_EP, "ka10032", token, {
         "mrkt_tp": config.MRKT_TP,          # 000:전체 001:코스피 101:코스닥
         "mang_stk_incls": "0",              # 관리종목 미포함
         "stex_tp": config.STEX_TP,          # 1:KRX 2:NXT 3:통합
     })
     rows = d.get("trde_prica_upper") or []
-    codes = []
+    out = []
     for row in rows:
         c = row.get("stk_cd")
-        if not c or _is_etf_like(row.get("stk_nm")):   # ETF/ETN 제외
+        nm = (row.get("stk_nm") or "").strip()
+        if not c or _is_etf_like(nm):                  # ETF/ETN 제외
             continue
-        codes.append(c.lstrip("A").strip())
-        if len(codes) >= count:
+        out.append((c.lstrip("A").strip(), nm))
+        if len(out) >= count:
             break
-    return codes
+    return out
 
 
 # ─────────────────── 일봉 (ka10081) — 추세 필터 ───────────────────

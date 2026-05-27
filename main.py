@@ -57,10 +57,10 @@ def _daily_ok(token, code):
 
 
 def scan_once(token):
-    codes = kiwoom.fetch_top_value_codes(token, config.TOP_N)
-    print(f"[scan] 거래대금 상위 {len(codes)}종목 점검", flush=True)
+    stocks = kiwoom.fetch_top_value_codes(token, config.TOP_N)
+    print(f"[scan] 거래대금 상위 {len(stocks)}종목 점검", flush=True)
     hits = 0
-    for code in codes:
+    for code, name in stocks:
         try:
             if not _daily_ok(token, code):
                 continue
@@ -71,7 +71,7 @@ def scan_once(token):
                 _last_alert[code] = time.time()
                 hits += 1
                 notifier.notify(
-                    f"📈 [수렴→확산] {code}\n"
+                    f"📈 [수렴→확산] {name} ({code})\n"
                     f"종가 {int(sig['close']):,} / 확산 {sig['expansion_x']}배\n"
                     f"3분봉 이평 {sig['ma']}"
                 )
