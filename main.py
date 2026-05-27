@@ -102,6 +102,20 @@ def main():
     if arg == "once":
         scan_once(token)
         return
+    if arg == "why":
+        # python main.py why <종목코드>  — 그 종목이 왜 신호인지/아닌지 숫자로 분석
+        code = sys.argv[2] if len(sys.argv) > 2 else ""
+        if not code:
+            print("사용법: python main.py why <종목코드>  (예: why 064290)", flush=True)
+            return
+        import json as _json
+        daily = kiwoom.fetch_daily_closes(token, code)
+        closes = kiwoom.fetch_3min_closes(token, code)
+        print(f"[why] {code} — 일봉 {len(daily)}개, 3분봉 {len(closes)}개", flush=True)
+        print(f"[why] 일봉 상승추세(daily_uptrend)? {analyzer.daily_uptrend(daily)}", flush=True)
+        info = analyzer.explain(closes)
+        print("[why] 3분봉 판정 상세:\n" + _json.dumps(info, ensure_ascii=False, indent=2), flush=True)
+        return
 
     notifier.notify(
         f"🟢 주식 검색기 시작 — 거래대금 상위 {config.TOP_N}종목 / "

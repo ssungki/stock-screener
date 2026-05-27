@@ -84,3 +84,50 @@ def detect(closes, lookback=20):
             "close": closes[now],
         }
     return None
+
+
+def explain(closes, lookback=20):
+    """detect()의 모든 중간값·조건 통과여부를 dict로 반환(진단용).
+    신호가 떴든 안 떴든 '왜 그런지' 숫자로 보여준다."""
+    n = len(closes)
+    need = max(MA_PERIODS) + lookback + 1
+    if n < need:
+        return {"error": f"데이터 부족: {n}봉 (필요 {need}봉)"}
+
+    now = n - 1
+    width_now, mas_now = _band_width(closes, now)
+    width_prev, _ = _band_width(closes, now - 1)
+    if width_now is None or width_prev is None:
+        return {"error": "이평 계산 불가(데이터 부족)"}
+
+    recent_min = min(
+        w for w in (_band_width(closes, i)[0] for i in range(now - lookback, now))
+        if w is not None
+    )
+    squeezed = recent_min <= SQUEEZE_THRESHOLD
+    expanding = (width_now > width_prev) and (width_now >= SQUEEZE_THRESHOLD * EXPANSION_RATIO)
+    short_aligned = mas_now[0] > mas_now[1] > mas_now[2]
+    above_base = mas_now[0] > mas_now[-1]
+    price_up = closes[now] > closes[now - 1] and closes[now] > mas_now[2]
+    signal = squeezed and expanding and short_aligned and above_base and price_up
+
+    return {
+        "close": closes[now],
+        "prev_close": closes[now - 1],
+        "ma": {p: round(m, 2) for p, m in zip(MA_PERIODS, mas_now)},
+        "recent_min_width": round(recent_min, 5),
+        "width_prev": round(width_prev, 5),
+        "width_now": round(width_now, 5),
+        "expansion_x_vs_min": round(width_now / max(recent_min, 1e-6), 2),
+        "thresholds": {"SQUEEZE": SQUEEZE_THRESHOLD,
+                       "EXPANSION": EXPANSION_RATIO,
+                       "expand_floor": round(SQUEEZE_THRESHOLD * EXPANSION_RATIO, 5)},
+        "checks": {
+            "squeezed(수렴有)": squeezed,
+            "expanding(확산中)": expanding,
+            "short_aligned(5>10>20)": short_aligned,
+            "above_base(5>120)": above_base,
+            "price_up(상승+20위)": price_up,
+        },
+        "SIGNAL": signal,
+    }
