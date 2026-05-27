@@ -10,11 +10,23 @@
   봉 항목 = cur_prc(현재가, +/- 부호 가능), dt(일자), cntr_tm(체결시간)
   거래대금상위 응답 배열 = trde_prica_upper, 항목 stk_cd / stk_nm / cur_prc
 """
+from datetime import datetime, timezone, timedelta
 import requests
 import config
 
 CHART_EP = f"{config.REST_BASE}/api/dostk/chart"
 RANK_EP = f"{config.REST_BASE}/api/dostk/rkinfo"
+KST = timezone(timedelta(hours=9))
+
+# ETF/ETN 은 후보에서 제외 (이름 앞부분으로 판별)
+_ETF_PREFIXES = ("KODEX", "TIGER", "KBSTAR", "ARIRANG", "HANARO", "SOL ", "ACE ",
+                 "RISE", "PLUS", "KOSEF", "TIMEFOLIO", "WOORI", "히어로즈", "마이티",
+                 "BNK", "FOCUS", "TREX", "KIWOOM", "VITA", "1Q", "ITF")
+
+
+def _is_etf_like(name):
+    n = (name or "").upper()
+    return any(n.startswith(p) for p in _ETF_PREFIXES) or "ETN" in n
 
 
 # ─────────────────────────── 토큰 ───────────────────────────
@@ -77,8 +89,9 @@ def fetch_top_value_codes(token, count=100):
     codes = []
     for row in rows:
         c = row.get("stk_cd")
-        if c:
-            codes.append(c.lstrip("A").strip())
+        if not c or _is_etf_like(row.get("stk_nm")):   # ETF/ETN 제외
+            continue
+        codes.append(c.lstrip("A").strip())
         if len(codes) >= count:
             break
     return codes
@@ -90,7 +103,7 @@ def fetch_daily_closes(token, stk_cd, count=60):
     try:
         d = _post(CHART_EP, "ka10081", token, {
             "stk_cd": stk_cd,
-            "base_dt": "",                  # 빈값=오늘 기준
+            "base_dt": datetime.now(KST).strftime("%Y%m%d"),  # 기준일자(오늘) — 빈값이면 안 옴
             "upd_stkpc_tp": "1",            # 수정주가 반영
         })
         rows = d.get("stk_dt_pole_chart_qry") or []
@@ -136,8 +149,9 @@ def probe(token):
     code = (rows[0].get("stk_cd") or "").lstrip("A") if rows else "005930"  # 장마감 등으로 비면 삼성전자로 차트 형식 확인
     if True:
         print(f"\n── 일봉(ka10081) {code} ──", flush=True)
-        dd = _post(CHART_EP, "ka10081", token, {"stk_cd": code, "base_dt": "", "upd_stkpc_tp": "1"})
-        print("keys:", list(dd.keys()), flush=True)
+        dd = _post(CHART_EP, "ka10081", token, {
+            "stk_cd": code, "base_dt": datetime.now(KST).strftime("%Y%m%d"), "upd_stkpc_tp": "1"})
+        print("keys:", list(dd.keys()), "rc:", dd.get("return_code"), dd.get("return_msg"), flush=True)
         dr = dd.get("stk_dt_pole_chart_qry") or []
         print(f"봉수:{len(dr)} 앞3:", [{k: x.get(k) for k in ('dt', 'cur_prc')} for x in dr[:3]], flush=True)
 
