@@ -11,6 +11,7 @@
   거래대금상위 응답 배열 = trde_prica_upper, 항목 stk_cd / stk_nm / cur_prc
 """
 from datetime import datetime, timezone, timedelta
+import time
 import requests
 import config
 
@@ -48,19 +49,23 @@ def get_access_token():
     return d["token"]
 
 
-def _post(endpoint, api_id, token, body, timeout=10):
-    """공통 POST. (응답 dict 반환, 실패 시 예외)"""
-    r = requests.post(
-        endpoint,
-        headers={
-            "Content-Type": "application/json;charset=UTF-8",
-            "authorization": f"Bearer {token}",
-            "api-id": api_id,
-        },
-        json=body,
-        timeout=timeout,
-    )
+def _post(endpoint, api_id, token, body, timeout=10, extra_headers=None, with_headers=False):
+    """공통 POST. (응답 dict 반환, 실패 시 예외)
+
+    extra_headers: 연속조회용 cont-yn/next-key 등 추가 요청헤더.
+    with_headers=True 면 (json, 응답헤더) 튜플 반환.
+    """
+    headers = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "authorization": f"Bearer {token}",
+        "api-id": api_id,
+    }
+    if extra_headers:
+        headers.update(extra_headers)
+    r = requests.post(endpoint, headers=headers, json=body, timeout=timeout)
     r.raise_for_status()
+    if with_headers:
+        return r.json(), r.headers
     return r.json()
 
 
@@ -79,22 +84,36 @@ def _to_num(v):
 
 # ─────────────────── 거래대금 상위 (ka10032) ───────────────────
 def fetch_top_value_codes(token, count=100):
-    """거래대금 상위 (종목코드, 종목명) 리스트(상위→하위). 최대 count개."""
-    d = _post(RANK_EP, "ka10032", token, {
+    """거래대금 상위 (종목코드, 종목명) 리스트(상위→하위). 최대 count개.
+
+    키움은 한 호출에 한 페이지만 주므로, cont-yn/next-key로 연속조회해
+    count개가 찰 때까지 다음 페이지를 이어받는다.
+    """
+    body = {
         "mrkt_tp": config.MRKT_TP,          # 000:전체 001:코스피 101:코스닥
         "mang_stk_incls": "0",              # 관리종목 미포함
         "stex_tp": config.STEX_TP,          # 1:KRX 2:NXT 3:통합
-    })
-    rows = d.get("trde_prica_upper") or []
+    }
     out = []
-    for row in rows:
-        c = row.get("stk_cd")
-        nm = (row.get("stk_nm") or "").strip()
-        if not c or _is_etf_like(nm):                  # ETF/ETN 제외
-            continue
-        out.append((c.lstrip("A").strip(), nm))
-        if len(out) >= count:
+    extra = None
+    for _ in range(10):                     # 페이지 최대 10회(무한루프 방지)
+        d, hdr = _post(RANK_EP, "ka10032", token, body,
+                       extra_headers=extra, with_headers=True)
+        rows = d.get("trde_prica_upper") or []
+        for row in rows:
+            c = row.get("stk_cd")
+            nm = (row.get("stk_nm") or "").strip()
+            if not c or _is_etf_like(nm):              # ETF/ETN 제외
+                continue
+            out.append((c.lstrip("A").strip(), nm))
+            if len(out) >= count:
+                return out
+        cont = (hdr.get("cont-yn") or "N").strip()
+        next_key = (hdr.get("next-key") or "").strip()
+        if cont != "Y" or not next_key or not rows:    # 더 줄 게 없으면 종료
             break
+        extra = {"cont-yn": "Y", "next-key": next_key}
+        time.sleep(config.REQ_DELAY_SEC)
     return out
 
 
