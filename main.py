@@ -64,7 +64,7 @@ def scan_once(token):
         try:
             if not _daily_ok(token, code):
                 continue
-            closes = kiwoom.fetch_3min_closes(token, code)
+            closes = kiwoom.fetch_intraday_closes(token, code)
             time.sleep(config.REQ_DELAY_SEC)
             sig = analyzer.detect(closes)
             if sig and _cooldown_ok(code):
@@ -110,11 +110,11 @@ def main():
             return
         import json as _json
         daily = kiwoom.fetch_daily_closes(token, code)
-        closes = kiwoom.fetch_3min_closes(token, code)
-        print(f"[why] {code} — 일봉 {len(daily)}개, 3분봉 {len(closes)}개", flush=True)
+        closes = kiwoom.fetch_intraday_closes(token, code)
+        print(f"[why] {code} — 일봉 {len(daily)}개, {config.TICK_MIN}분봉 {len(closes)}개", flush=True)
         print(f"[why] 일봉 상승추세(daily_uptrend)? {analyzer.daily_uptrend(daily)}", flush=True)
         info = analyzer.explain(closes)
-        print("[why] 3분봉 판정 상세:\n" + _json.dumps(info, ensure_ascii=False, indent=2), flush=True)
+        print(f"[why] {config.TICK_MIN}분봉 판정 상세:\n" + _json.dumps(info, ensure_ascii=False, indent=2), flush=True)
         return
 
     notifier.notify(

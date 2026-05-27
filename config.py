@@ -41,6 +41,7 @@ ALERT_COOLDOWN_MIN = int(get("ALERT_COOLDOWN_MIN", "30"))
 DAILY_TREND_MA   = int(get("DAILY_TREND_MA", "20"))      # 일봉 상승추세 판정 이평기간
 
 # 폴링(거래대금 상위 스캔)
+TICK_MIN          = get("TICK_MIN", "3")                 # 분봉 단위(분). 1=1분봉(단타,빠름) 3=3분봉
 TOP_N             = int(get("TOP_N", "100"))             # 거래대금 상위 몇 종목 감시
 POLL_INTERVAL_SEC = int(get("POLL_INTERVAL_SEC", "120")) # 스캔 주기(초)
 REQ_DELAY_SEC     = float(get("REQ_DELAY_SEC", "0.3"))   # API 호출 간 간격(레이트리밋)

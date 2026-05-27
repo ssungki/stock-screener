@@ -136,12 +136,12 @@ def fetch_daily_closes(token, stk_cd, count=60):
 
 
 # ─────────────────── 분봉 (ka10080) — 수렴/확산 판정 ───────────────────
-def fetch_3min_closes(token, stk_cd, count=160):
-    """3분봉 종가 리스트(오래된→최신)."""
+def fetch_intraday_closes(token, stk_cd, count=160):
+    """분봉 종가 리스트(오래된→최신). 봉 단위는 config.TICK_MIN(분)."""
     try:
         d = _post(CHART_EP, "ka10080", token, {
             "stk_cd": stk_cd,
-            "tic_scope": "3",               # 3분
+            "tic_scope": str(config.TICK_MIN),   # 분봉 단위(1=1분, 3=3분)
             "upd_stkpc_tp": "1",
         })
         rows = d.get("stk_min_pole_chart_qry") or []
