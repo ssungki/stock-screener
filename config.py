@@ -37,6 +37,7 @@ NTFY_SERVER = get("NTFY_SERVER", "https://ntfy.sh")
 MA_PERIODS       = [int(x) for x in get("MA_PERIODS", "5,10,20,60,120").split(",")]
 SQUEEZE_THRESHOLD = float(get("SQUEEZE_THRESHOLD", "0.015"))
 EXPANSION_RATIO   = float(get("EXPANSION_RATIO", "1.3"))
+LOOKBACK          = int(get("LOOKBACK", "20"))          # 수렴(스퀴즈) 탐색 구간(직전 봉 수)
 ALERT_COOLDOWN_MIN = int(get("ALERT_COOLDOWN_MIN", "30"))
 DAILY_TREND_MA   = int(get("DAILY_TREND_MA", "20"))      # 일봉 상승추세 판정 이평기간
 

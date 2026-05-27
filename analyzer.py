@@ -9,7 +9,7 @@
                   이상으로 터지고, 이평선이 단기 정배열이며, 종가가 직전보다 상승
 이 둘이 동시 충족되는 순간을 '신호'로 본다.
 """
-from config import MA_PERIODS, SQUEEZE_THRESHOLD, EXPANSION_RATIO, DAILY_TREND_MA
+from config import MA_PERIODS, SQUEEZE_THRESHOLD, EXPANSION_RATIO, DAILY_TREND_MA, LOOKBACK
 
 
 def daily_uptrend(daily_closes):
@@ -41,7 +41,7 @@ def _band_width(closes, idx):
     width = (max(mas) - min(mas)) / close
     return width, mas
 
-def detect(closes, lookback=20):
+def detect(closes, lookback=LOOKBACK):
     """신호면 dict 반환, 아니면 None.
     lookback: '최근 수렴'을 찾을 직전 봉 수(120MA가 느려서 돌파가 완성될 즈음에도
               수렴이 잡히도록 넉넉히 본다).
@@ -88,7 +88,7 @@ def detect(closes, lookback=20):
     return None
 
 
-def explain(closes, lookback=20):
+def explain(closes, lookback=LOOKBACK):
     """detect()의 모든 중간값·조건 통과여부를 dict로 반환(진단용).
     신호가 떴든 안 떴든 '왜 그런지' 숫자로 보여준다."""
     n = len(closes)
