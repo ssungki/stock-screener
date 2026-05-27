@@ -5,8 +5,8 @@
   - 이평선 5·10·20·60·120 계산
   - band_width(t) = (이평선 최고 - 이평선 최저) / 종가   ← 이평선들이 얼마나 벌어져 있나
   - "모임(수렴)" : 최근 구간에서 band_width 가 SQUEEZE_THRESHOLD 이하로 좁혀졌던 적이 있음
-  - "퍼짐(확산)" : 지금 band_width 가 직전보다 EXPANSION_RATIO 배 이상 커지고,
-                  이평선이 정배열(5>10>20>60>120)이며, 종가가 직전보다 상승
+  - "퍼짐(확산)" : 지금 band_width 가 (직전보다 커지면서) 수렴최저폭의 EXPANSION_RATIO 배
+                  이상으로 터지고, 이평선이 단기 정배열이며, 종가가 직전보다 상승
 이 둘이 동시 충족되는 순간을 '신호'로 본다.
 """
 from config import MA_PERIODS, SQUEEZE_THRESHOLD, EXPANSION_RATIO, DAILY_TREND_MA
@@ -64,8 +64,10 @@ def detect(closes, lookback=20):
     )
     squeezed = recent_min <= SQUEEZE_THRESHOLD
 
-    # 2) 지금 막 벌어지는 중(확산) — 수렴 임계치의 EXPANSION_RATIO 배 이상으로 폭이 커짐
-    expanding = (width_now > width_prev) and (width_now >= SQUEEZE_THRESHOLD * EXPANSION_RATIO)
+    # 2) 지금 막 벌어지는 중(확산) — 수렴최저폭(recent_min)의 EXPANSION_RATIO 배 이상으로 폭이 터짐
+    #    (절대 하한 SQUEEZE_THRESHOLD도 같이 둬서, 수렴이 극도로 좁았을 때 미세확산이 통과하는 것 방지)
+    expanding = (width_now > width_prev) and \
+                (width_now >= max(SQUEEZE_THRESHOLD, recent_min * EXPANSION_RATIO))
 
     # 3) 상승 방향 돌파:
     #    - 단기 정배열 5>10>20  (돌파 초기에 먼저 형성됨. 60·120 완성은 기다리지 않음)
@@ -105,7 +107,8 @@ def explain(closes, lookback=20):
         if w is not None
     )
     squeezed = recent_min <= SQUEEZE_THRESHOLD
-    expanding = (width_now > width_prev) and (width_now >= SQUEEZE_THRESHOLD * EXPANSION_RATIO)
+    expanding = (width_now > width_prev) and \
+                (width_now >= max(SQUEEZE_THRESHOLD, recent_min * EXPANSION_RATIO))
     short_aligned = mas_now[0] > mas_now[1] > mas_now[2]
     above_base = mas_now[0] > mas_now[-1]
     price_up = closes[now] > closes[now - 1] and closes[now] > mas_now[2]
@@ -121,7 +124,7 @@ def explain(closes, lookback=20):
         "expansion_x_vs_min": round(width_now / max(recent_min, 1e-6), 2),
         "thresholds": {"SQUEEZE": SQUEEZE_THRESHOLD,
                        "EXPANSION": EXPANSION_RATIO,
-                       "expand_floor": round(SQUEEZE_THRESHOLD * EXPANSION_RATIO, 5)},
+                       "expand_floor(필요width)": round(max(SQUEEZE_THRESHOLD, recent_min * EXPANSION_RATIO), 5)},
         "checks": {
             "squeezed(수렴有)": squeezed,
             "expanding(확산中)": expanding,
