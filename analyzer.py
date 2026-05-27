@@ -9,7 +9,19 @@
                   이평선이 정배열(5>10>20>60>120)이며, 종가가 직전보다 상승
 이 둘이 동시 충족되는 순간을 '신호'로 본다.
 """
-from config import MA_PERIODS, SQUEEZE_THRESHOLD, EXPANSION_RATIO
+from config import MA_PERIODS, SQUEEZE_THRESHOLD, EXPANSION_RATIO, DAILY_TREND_MA
+
+
+def daily_uptrend(daily_closes):
+    """일봉 상승추세 필터: 최근 종가가 일봉 N일 이평 위 + 그 이평이 우상향.
+    데이터 부족하면 False(보수적으로 제외)."""
+    n = len(daily_closes)
+    if n < DAILY_TREND_MA + 5:
+        return False
+    ma_now = sum(daily_closes[-DAILY_TREND_MA:]) / DAILY_TREND_MA
+    ma_prev = sum(daily_closes[-DAILY_TREND_MA - 5:-5]) / DAILY_TREND_MA
+    return daily_closes[-1] > ma_now and ma_now >= ma_prev
+
 
 def _sma(values, period, end_idx):
     """end_idx(포함) 기준 직전 period개 단순이동평균. 데이터 부족하면 None."""
@@ -29,9 +41,10 @@ def _band_width(closes, idx):
     width = (max(mas) - min(mas)) / close
     return width, mas
 
-def detect(closes, lookback=10):
+def detect(closes, lookback=20):
     """신호면 dict 반환, 아니면 None.
-    lookback: '최근 수렴'을 찾을 직전 봉 수.
+    lookback: '최근 수렴'을 찾을 직전 봉 수(120MA가 느려서 돌파가 완성될 즈음에도
+              수렴이 잡히도록 넉넉히 본다).
     """
     n = len(closes)
     need = max(MA_PERIODS) + lookback + 1
@@ -44,27 +57,29 @@ def detect(closes, lookback=10):
     if width_now is None or width_prev is None:
         return None
 
-    # 1) 최근 lookback 구간에 수렴(스퀴즈) 있었나
+    # 1) 최근 lookback 구간에 수렴(스퀴즈) 있었나 — 이평선들이 다닥다닥 모였던 적
     recent_min = min(
         w for w in (_band_width(closes, i)[0] for i in range(now - lookback, now))
         if w is not None
     )
     squeezed = recent_min <= SQUEEZE_THRESHOLD
 
-    # 2) 지금 확산 전환 + 정배열 + 상승
-    #    - 현재 밴드폭이 직전보다 커지는 중(벌어지는 방향)이고
-    #    - 수렴 임계치의 EXPANSION_RATIO 배 이상으로 벌어졌으면 '확산'으로 본다
-    #    (직전 1봉 비교만 하면 점진적 확산을 놓쳐서, 수렴 구간 탈출 여부로 판정)
+    # 2) 지금 막 벌어지는 중(확산) — 수렴 임계치의 EXPANSION_RATIO 배 이상으로 폭이 커짐
     expanding = (width_now > width_prev) and (width_now >= SQUEEZE_THRESHOLD * EXPANSION_RATIO)
-    aligned = all(mas_now[i] > mas_now[i + 1] for i in range(len(mas_now) - 1))  # 정배열
-    price_up = closes[now] > closes[now - 1]
 
-    if squeezed and expanding and aligned and price_up:
+    # 3) 상승 방향 돌파:
+    #    - 단기 정배열 5>10>20  (돌파 초기에 먼저 형성됨. 60·120 완성은 기다리지 않음)
+    #    - 단기선이 장기선 위로 (5MA > 120MA) = 베이스 돌파
+    #    - 종가가 상승 + 20이평 위
+    short_aligned = mas_now[0] > mas_now[1] > mas_now[2]
+    above_base = mas_now[0] > mas_now[-1]
+    price_up = closes[now] > closes[now - 1] and closes[now] > mas_now[2]
+
+    if squeezed and expanding and short_aligned and above_base and price_up:
         return {
             "band_width_now": round(width_now, 5),
-            "band_width_prev": round(width_prev, 5),
             "recent_min_width": round(recent_min, 5),
-            "expansion_x": round(width_now / width_prev, 2),
+            "expansion_x": round(min(width_now / max(recent_min, 1e-6), 999), 1),
             "ma": {p: round(m, 1) for p, m in zip(MA_PERIODS, mas_now)},
             "close": closes[now],
         }

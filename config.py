@@ -38,3 +38,13 @@ MA_PERIODS       = [int(x) for x in get("MA_PERIODS", "5,10,20,60,120").split(",
 SQUEEZE_THRESHOLD = float(get("SQUEEZE_THRESHOLD", "0.015"))
 EXPANSION_RATIO   = float(get("EXPANSION_RATIO", "1.3"))
 ALERT_COOLDOWN_MIN = int(get("ALERT_COOLDOWN_MIN", "30"))
+DAILY_TREND_MA   = int(get("DAILY_TREND_MA", "20"))      # 일봉 상승추세 판정 이평기간
+
+# 폴링(거래대금 상위 스캔)
+TOP_N             = int(get("TOP_N", "100"))             # 거래대금 상위 몇 종목 감시
+POLL_INTERVAL_SEC = int(get("POLL_INTERVAL_SEC", "120")) # 스캔 주기(초)
+REQ_DELAY_SEC     = float(get("REQ_DELAY_SEC", "0.3"))   # API 호출 간 간격(레이트리밋)
+MRKT_TP           = get("MRKT_TP", "000")                # 000:전체 001:코스피 101:코스닥
+STEX_TP           = get("STEX_TP", "1")                  # 1:KRX 2:NXT 3:통합
+MARKET_OPEN_HM    = int(get("MARKET_OPEN_HM", "540"))    # 09:00 = 9*60
+MARKET_CLOSE_HM   = int(get("MARKET_CLOSE_HM", "930"))   # 15:30 = 15*60+30

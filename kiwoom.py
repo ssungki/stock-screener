@@ -1,17 +1,21 @@
-"""키움 REST API 클라이언트.
-- 접근토큰 발급 (POST /oauth2/token)
-- WebSocket 실시간 조건검색 (LOGIN → CNSRLST → 실시간 조건 등록)
-- 3분봉 차트 조회 (REST)
+"""키움 REST API 클라이언트 (폴링 방식).
 
-⚠️ 일부 메시지 스키마(실시간 조건 등록 trnm, 분봉 차트 api-id/필드명)는
-   실제 키움 문서 기준으로 연결 테스트하며 확정 필요 — 표시는 [확인要].
+- 접근토큰 발급 (POST /oauth2/token)
+- 거래대금 상위 종목 (ka10032, /api/dostk/rkinfo)
+- 일봉 차트 (ka10081, /api/dostk/chart)  ← 일봉 상승추세 필터용
+- 분봉 차트 (ka10080, /api/dostk/chart)  ← 3분봉 수렴→확산 판정용
+
+필드명은 키움 신형 REST 스펙 기준:
+  분봉/일봉 응답 배열 = stk_min_pole_chart_qry / stk_dt_pole_chart_qry
+  봉 항목 = cur_prc(현재가, +/- 부호 가능), dt(일자), cntr_tm(체결시간)
+  거래대금상위 응답 배열 = trde_prica_upper, 항목 stk_cd / stk_nm / cur_prc
 """
-import json
-import time
-import threading
 import requests
-import websocket  # websocket-client
 import config
+
+CHART_EP = f"{config.REST_BASE}/api/dostk/chart"
+RANK_EP = f"{config.REST_BASE}/api/dostk/rkinfo"
+
 
 # ─────────────────────────── 토큰 ───────────────────────────
 def get_access_token():
@@ -27,138 +31,118 @@ def get_access_token():
     )
     r.raise_for_status()
     d = r.json()
-    if d.get("return_code", 0) not in (0, None) and "token" not in d:
+    if "token" not in d:
         raise RuntimeError(f"토큰 발급 실패: {d}")
     return d["token"]
 
-# ─────────────────────── 3분봉 차트 (REST) ───────────────────────
-def fetch_3min_closes(token, stk_cd, count=160):
-    """종목의 3분봉 종가 리스트(오래된→최신). [확인要] api-id/필드명은 문서 대조 필요."""
+
+def _post(endpoint, api_id, token, body, timeout=10):
+    """공통 POST. (응답 dict 반환, 실패 시 예외)"""
+    r = requests.post(
+        endpoint,
+        headers={
+            "Content-Type": "application/json;charset=UTF-8",
+            "authorization": f"Bearer {token}",
+            "api-id": api_id,
+        },
+        json=body,
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def _to_num(v):
+    """'+12,345' / '-1,200' / '12345' → 12345.0 (부호 무시, 절대값)."""
+    if v is None:
+        return None
+    s = str(v).replace(",", "").replace("+", "").strip()
+    if s in ("", "-"):
+        return None
     try:
-        r = requests.post(
-            f"{config.REST_BASE}/api/dostk/chart",
-            headers={
-                "Content-Type": "application/json;charset=UTF-8",
-                "authorization": f"Bearer {token}",
-                "api-id": "ka10080",          # 주식분봉차트조회요청 [확인要]
-            },
-            json={
-                "stk_cd": stk_cd,
-                "tic_scope": "3",             # 3분 [확인要]
-                "upd_stkpc_tp": "1",
-            },
-            timeout=10,
-        )
-        d = r.json()
-        # 응답 배열 키 이름은 문서 대조 필요. 흔한 후보들 방어적으로 탐색.
-        rows = d.get("stk_min_pole_chart_qry") or d.get("output") or d.get("chart") or []
-        closes = []
-        for row in rows:
-            v = row.get("cur_prc") or row.get("close") or row.get("stck_prpr")
-            if v is None:
-                continue
-            closes.append(abs(float(str(v).replace(",", ""))))
-        closes.reverse()  # 최신이 앞이면 뒤집어 오래된→최신
+        return abs(float(s))
+    except ValueError:
+        return None
+
+
+# ─────────────────── 거래대금 상위 (ka10032) ───────────────────
+def fetch_top_value_codes(token, count=100):
+    """거래대금 상위 종목코드 리스트(상위→하위). 최대 count개."""
+    d = _post(RANK_EP, "ka10032", token, {
+        "mrkt_tp": config.MRKT_TP,          # 000:전체 001:코스피 101:코스닥
+        "mang_stk_incls": "0",              # 관리종목 미포함
+        "stex_tp": config.STEX_TP,          # 1:KRX 2:NXT 3:통합
+    })
+    rows = d.get("trde_prica_upper") or []
+    codes = []
+    for row in rows:
+        c = row.get("stk_cd")
+        if c:
+            codes.append(c.lstrip("A").strip())
+        if len(codes) >= count:
+            break
+    return codes
+
+
+# ─────────────────── 일봉 (ka10081) — 추세 필터 ───────────────────
+def fetch_daily_closes(token, stk_cd, count=60):
+    """일봉 종가 리스트(오래된→최신)."""
+    try:
+        d = _post(CHART_EP, "ka10081", token, {
+            "stk_cd": stk_cd,
+            "base_dt": "",                  # 빈값=오늘 기준
+            "upd_stkpc_tp": "1",            # 수정주가 반영
+        })
+        rows = d.get("stk_dt_pole_chart_qry") or []
+        closes = [c for c in (_to_num(r.get("cur_prc")) for r in rows) if c]
+        closes.reverse()                    # 키움은 최신이 앞 → 오래된→최신
         return closes[-count:]
     except Exception as e:
-        print(f"[chart] {stk_cd} 분봉 조회 실패: {e}", flush=True)
+        print(f"[daily] {stk_cd} 일봉 실패: {e}", flush=True)
         return []
 
-# ─────────────────────── WebSocket 조건검색 ───────────────────────
-class ConditionStream:
-    """실시간 조건검색 편입 종목코드를 on_codes(codes) 콜백으로 흘려보낸다."""
-    def __init__(self, token, condition_name, on_codes):
-        self.token = token
-        self.condition_name = condition_name
-        self.on_codes = on_codes
-        self.ws = None
-        self.target_seq = None
-        self._stop = False
 
-    def _send(self, obj):
-        self.ws.send(json.dumps(obj))
+# ─────────────────── 분봉 (ka10080) — 수렴/확산 판정 ───────────────────
+def fetch_3min_closes(token, stk_cd, count=160):
+    """3분봉 종가 리스트(오래된→최신)."""
+    try:
+        d = _post(CHART_EP, "ka10080", token, {
+            "stk_cd": stk_cd,
+            "tic_scope": "3",               # 3분
+            "upd_stkpc_tp": "1",
+        })
+        rows = d.get("stk_min_pole_chart_qry") or []
+        closes = [c for c in (_to_num(r.get("cur_prc")) for r in rows) if c]
+        closes.reverse()
+        return closes[-count:]
+    except Exception as e:
+        print(f"[min] {stk_cd} 분봉 실패: {e}", flush=True)
+        return []
 
-    def on_open(self, ws):
-        print("[ws] 연결됨 → LOGIN", flush=True)
-        self._send({"trnm": "LOGIN", "token": self.token})
 
-    def on_message(self, ws, raw):
-        try:
-            msg = json.loads(raw)
-        except Exception:
-            return
-        trnm = msg.get("trnm")
+# ─────────────────────────── 진단(probe) ───────────────────────────
+def probe(token):
+    """실제 응답 구조를 눈으로 확인하는 진단. 필드명/정렬 검증용."""
+    print("── 거래대금상위(ka10032) ──", flush=True)
+    d = _post(RANK_EP, "ka10032", token, {
+        "mrkt_tp": config.MRKT_TP, "mang_stk_incls": "0", "stex_tp": config.STEX_TP,
+    })
+    print("top keys:", list(d.keys()), flush=True)
+    rows = d.get("trde_prica_upper") or []
+    print(f"종목수: {len(rows)} / 상위5:", flush=True)
+    for r in rows[:5]:
+        print("  ", {k: r.get(k) for k in ("now_rank", "stk_cd", "stk_nm", "cur_prc")}, flush=True)
 
-        if trnm == "LOGIN":
-            if msg.get("return_code") == 0:
-                print("[ws] 로그인 성공 → 조건식 목록 요청(CNSRLST)", flush=True)
-                self._send({"trnm": "CNSRLST"})
-            else:
-                print(f"[ws] 로그인 실패: {msg}", flush=True)
+    if rows:
+        code = (rows[0].get("stk_cd") or "").lstrip("A")
+        print(f"\n── 일봉(ka10081) {code} ──", flush=True)
+        dd = _post(CHART_EP, "ka10081", token, {"stk_cd": code, "base_dt": "", "upd_stkpc_tp": "1"})
+        print("keys:", list(dd.keys()), flush=True)
+        dr = dd.get("stk_dt_pole_chart_qry") or []
+        print(f"봉수:{len(dr)} 앞3:", [{k: x.get(k) for k in ('dt', 'cur_prc')} for x in dr[:3]], flush=True)
 
-        elif trnm == "CNSRLST":
-            # data: [[seq, name], ...] 형태로 옴
-            conds = msg.get("data") or []
-            print(f"[ws] 조건식 {len(conds)}개: {conds}", flush=True)
-            for item in conds:
-                seq, name = (item[0], item[1]) if isinstance(item, list) else (item.get("seq"), item.get("name"))
-                if name == self.condition_name:
-                    self.target_seq = seq
-            if self.target_seq is None:
-                print(f"[ws] '{self.condition_name}' 조건식을 못 찾음. HTS에서 저장했는지 확인.", flush=True)
-                return
-            # 실시간 조건검색 등록 [확인要] trnm/필드명
-            print(f"[ws] 조건식 seq={self.target_seq} 실시간 등록", flush=True)
-            self._send({"trnm": "CNSRREQ", "seq": str(self.target_seq), "search_type": "1"})
-
-        elif trnm in ("CNSRREQ", "REAL"):
-            codes = self._extract_codes(msg)
-            if codes:
-                self.on_codes(codes)
-
-        elif trnm == "PING":
-            self._send({"trnm": "PONG"})
-
-    def _extract_codes(self, msg):
-        """편입 종목코드 추출 (스키마 방어적). [확인要] 실제 키 대조."""
-        codes = []
-        data = msg.get("data")
-        if isinstance(data, list):
-            for it in data:
-                if isinstance(it, dict):
-                    c = it.get("jmcode") or it.get("stk_cd") or it.get("9001")
-                    # '편입'(insert)만 관심, '이탈'은 무시
-                    if c and str(it.get("type", "I")).upper().startswith("I"):
-                        codes.append(c.lstrip("A"))
-                elif isinstance(it, str):
-                    codes.append(it.lstrip("A"))
-        return codes
-
-    def on_error(self, ws, err):
-        print(f"[ws] 에러: {err}", flush=True)
-
-    def on_close(self, ws, code, reason):
-        print(f"[ws] 종료: {code} {reason}", flush=True)
-
-    def run_forever(self):
-        """끊기면 자동 재연결."""
-        while not self._stop:
-            try:
-                self.ws = websocket.WebSocketApp(
-                    config.WS_URL,
-                    on_open=self.on_open,
-                    on_message=self.on_message,
-                    on_error=self.on_error,
-                    on_close=self.on_close,
-                )
-                self.ws.run_forever(ping_interval=30, ping_timeout=10)
-            except Exception as e:
-                print(f"[ws] run_forever 예외: {e}", flush=True)
-            if not self._stop:
-                print("[ws] 5초 후 재연결...", flush=True)
-                time.sleep(5)
-
-    def stop(self):
-        self._stop = True
-        if self.ws:
-            self.ws.close()
+        print(f"\n── 3분봉(ka10080) {code} ──", flush=True)
+        dm = _post(CHART_EP, "ka10080", token, {"stk_cd": code, "tic_scope": "3", "upd_stkpc_tp": "1"})
+        print("keys:", list(dm.keys()), flush=True)
+        mr = dm.get("stk_min_pole_chart_qry") or []
+        print(f"봉수:{len(mr)} 앞3:", [{k: x.get(k) for k in ('cntr_tm', 'cur_prc')} for x in mr[:3]], flush=True)
