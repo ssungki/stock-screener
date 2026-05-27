@@ -57,17 +57,26 @@ def _daily_ok(token, code):
 
 
 def scan_once(token):
-    stocks = kiwoom.fetch_top_value_codes(token, config.TOP_N)
-    print(f"[scan] 거래대금 상위 {len(stocks)}종목 점검", flush=True)
+    # 후보 풀 = 급등주 교집합(전일대비등락률상위 ∩ 거래량급증 ∩ 종가≥MIN_PRICE)
+    stocks = kiwoom.fetch_surge_universe(token)
+    print(f"[scan] 급등주 후보 {len(stocks)}종목 점검", flush=True)
     hits = 0
     for code, name in stocks:
         try:
             if not _daily_ok(token, code):
                 continue
-            closes = kiwoom.fetch_intraday_closes(token, code)
+            # 1) 돌파 트리거: 트리거 봉(1분봉)에서 수렴→확산 포착(빠름)
+            c_trig = kiwoom.fetch_intraday_closes(token, code, tic=config.TRIGGER_TIC)
             time.sleep(config.REQ_DELAY_SEC)
-            sig = analyzer.detect(closes)
-            if sig and _cooldown_ok(code):
+            sig = analyzer.detect(c_trig)
+            if not sig:
+                continue
+            # 2) 베이스 게이트: 수렴 봉(3분봉)에 묵직한 수렴이 있었는지 확인
+            c_sq = kiwoom.fetch_intraday_closes(token, code, tic=config.SQUEEZE_TIC)
+            time.sleep(config.REQ_DELAY_SEC)
+            if not analyzer.squeeze_present(c_sq):
+                continue
+            if _cooldown_ok(code):
                 _last_alert[code] = time.time()
                 hits += 1
                 now_kst = datetime.now(KST).strftime("%H:%M:%S")
@@ -79,6 +88,34 @@ def scan_once(token):
         except Exception as e:
             print(f"[scan] {code} 처리 오류: {e}", flush=True)
     print(f"[scan] 완료 — 신호 {hits}건", flush=True)
+
+
+def replay(token, code):
+    """오늘 분봉을 처음부터 훑으며 하이브리드 신호가 언제 떴을지 재현(검증용)."""
+    trig = kiwoom.fetch_intraday_bars(token, code, tic=config.TRIGGER_TIC, count=400)
+    sq = kiwoom.fetch_intraday_bars(token, code, tic=config.SQUEEZE_TIC, count=200)
+    up = analyzer.daily_uptrend(kiwoom.fetch_daily_closes(token, code))
+    print(f"[replay] {code} — 트리거{config.TRIGGER_TIC}분봉 {len(trig)}개 / "
+          f"수렴{config.SQUEEZE_TIC}분봉 {len(sq)}개 / 일봉상승추세={up}", flush=True)
+    if not trig:
+        print("[replay] 분봉 데이터 없음", flush=True)
+        return
+    trig_closes = [c for _, c in trig]
+    need = max(analyzer.MA_PERIODS) + analyzer.LOOKBACK + 1
+    fired = []
+    for i in range(need, len(trig)):
+        sig = analyzer.detect(trig_closes[:i + 1])
+        if not sig:
+            continue
+        t = trig[i][0]                                  # 그 봉의 체결시간
+        sq_sub = [c for (tt, c) in sq if tt and tt <= t] or [c for _, c in sq]
+        gate = analyzer.squeeze_present(sq_sub)
+        fired.append((t, gate))
+        mark = "✅최종신호" if gate else "⚠️트리거만(베이스 미충족)"
+        print(f"  {t[-6:]}  {mark}  종가 {int(sig['close']):,} 확산 {sig['expansion_x']}배", flush=True)
+    real = [f for f in fired if f[1]]
+    print(f"[replay] 트리거 {len(fired)}회 / 최종신호(베이스 통과) {len(real)}회"
+          + (f" / 첫 신호 {real[0][0][-6:]}" if real else ""), flush=True)
 
 
 def _market_open():
@@ -116,10 +153,19 @@ def main():
         info = analyzer.explain(closes)
         print(f"[why] {config.TICK_MIN}분봉 판정 상세:\n" + _json.dumps(info, ensure_ascii=False, indent=2), flush=True)
         return
+    if arg == "replay":
+        # python main.py replay <종목코드>  — 오늘 분봉 재현해 신호 시각 검증
+        code = sys.argv[2] if len(sys.argv) > 2 else ""
+        if not code:
+            print("사용법: python main.py replay <종목코드>  (예: replay 064400)", flush=True)
+            return
+        replay(token, code)
+        return
 
     notifier.notify(
-        f"🟢 주식 검색기 시작 — 거래대금 상위 {config.TOP_N}종목 / "
-        f"{config.POLL_INTERVAL_SEC}초 주기 / 장중 가동"
+        f"🟢 주식 검색기 시작 — 급등주 풀(등락률∩거래량급증) / "
+        f"트리거 {config.TRIGGER_TIC}분봉·수렴 {config.SQUEEZE_TIC}분봉 / "
+        f"{config.POLL_INTERVAL_SEC}초 주기"
     )
     while True:
         try:

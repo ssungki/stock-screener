@@ -41,6 +41,18 @@ def _band_width(closes, idx):
     width = (max(mas) - min(mas)) / close
     return width, mas
 
+def squeeze_present(closes, lookback=LOOKBACK):
+    """하이브리드 게이트: 이 봉(보통 3분봉)에서 최근 lookback 구간에
+    수렴(밴드폭 <= SQUEEZE_THRESHOLD)이 있었는지. 묵직한 베이스 확인용."""
+    n = len(closes)
+    if n < max(MA_PERIODS) + lookback + 1:
+        return False
+    now = n - 1
+    widths = [w for w in (_band_width(closes, i)[0]
+                          for i in range(now - lookback, now)) if w is not None]
+    return bool(widths) and min(widths) <= SQUEEZE_THRESHOLD
+
+
 def detect(closes, lookback=LOOKBACK):
     """신호면 dict 반환, 아니면 None.
     lookback: '최근 수렴'을 찾을 직전 봉 수(120MA가 느려서 돌파가 완성될 즈음에도

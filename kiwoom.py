@@ -117,6 +117,84 @@ def fetch_top_value_codes(token, count=100):
     return out
 
 
+# ─────────────────── 순위 공통(연속조회) ───────────────────
+def _fetch_ranking_rows(token, api_id, body, array_key, count, max_pages=10):
+    """순위 API 공통: cont-yn/next-key 연속조회로 array_key 행을 count개까지 모은다."""
+    rows_all = []
+    extra = None
+    for _ in range(max_pages):
+        d, hdr = _post(RANK_EP, api_id, token, body, extra_headers=extra, with_headers=True)
+        rc = d.get("return_code")
+        if rc not in (0, None, "0"):
+            print(f"[rank] {api_id} return_code={rc} msg={d.get('return_msg')}", flush=True)
+        rows = d.get(array_key) or []
+        rows_all.extend(rows)
+        if len(rows_all) >= count:
+            break
+        cont = (hdr.get("cont-yn") or "N").strip()
+        next_key = (hdr.get("next-key") or "").strip()
+        if cont != "Y" or not next_key or not rows:
+            break
+        extra = {"cont-yn": "Y", "next-key": next_key}
+        time.sleep(config.REQ_DELAY_SEC)
+    return rows_all[:count]
+
+
+def _rows_to_map(rows, count):
+    """순위 행 → {code: (name, price)}  (ETF/ETN 제외)."""
+    out = {}
+    for row in rows:
+        c = row.get("stk_cd")
+        nm = (row.get("stk_nm") or "").strip()
+        if not c or _is_etf_like(nm):
+            continue
+        out[c.lstrip("A").strip()] = (nm, _to_num(row.get("cur_prc")))
+        if len(out) >= count:
+            break
+    return out
+
+
+# ─────────────────── 전일대비 등락률 상위 (ka10027) ───────────────────
+def fetch_change_rate_tops(token, count=200):
+    """전일대비 등락률(상승률) 상위 → {code:(name,price)}."""
+    body = {
+        "mrkt_tp": config.MRKT_TP, "sort_tp": "1",   # 1:상승률
+        "trde_qty_cnd": "0000", "stk_cnd": "0", "crd_cnd": "0",
+        "updown_incls": "1", "pric_cnd": "0", "trde_prica_cnd": "0",
+        "stex_tp": config.STEX_TP,
+    }
+    rows = _fetch_ranking_rows(token, "ka10027", body, "pred_pre_flu_rt_upper", count)
+    return _rows_to_map(rows, count)
+
+
+# ─────────────────── 거래량 급증(전일대비) 상위 (ka10023) ───────────────────
+def fetch_volume_spikes(token, count=100):
+    """거래량 급증률(전일대비) 상위 → {code:(name,price)}."""
+    body = {
+        "mrkt_tp": config.MRKT_TP, "sort_tp": "2",   # 2:급증률
+        "tm_tp": "2",                                # 2:전일(전일대비 급증)
+        "trde_qty_tp": "0000", "stk_cnd": "0", "pric_tp": "0",
+        "stex_tp": config.STEX_TP, "tm": "1",
+    }
+    rows = _fetch_ranking_rows(token, "ka10023", body, "trde_qty_sdnin", count)
+    return _rows_to_map(rows, count)
+
+
+def fetch_surge_universe(token):
+    """급등주 후보 풀 = 전일대비등락률상위 ∩ 거래량급증 ∩ 종가>=MIN_PRICE.
+    반환: (code, name) 리스트."""
+    chg = fetch_change_rate_tops(token, config.RANK_CHANGE_TOP)
+    time.sleep(config.REQ_DELAY_SEC)
+    vol = fetch_volume_spikes(token, config.RANK_VOLSPIKE_TOP)
+    out = []
+    for code in set(chg) & set(vol):                 # 교집합(AND)
+        nm, price = chg[code]
+        if price is not None and price < config.MIN_PRICE:
+            continue
+        out.append((code, nm))
+    return out
+
+
 # ─────────────────── 일봉 (ka10081) — 추세 필터 ───────────────────
 def fetch_daily_closes(token, stk_cd, count=60):
     """일봉 종가 리스트(오래된→최신)."""
@@ -136,21 +214,31 @@ def fetch_daily_closes(token, stk_cd, count=60):
 
 
 # ─────────────────── 분봉 (ka10080) — 수렴/확산 판정 ───────────────────
-def fetch_intraday_closes(token, stk_cd, count=160):
-    """분봉 종가 리스트(오래된→최신). 봉 단위는 config.TICK_MIN(분)."""
+def fetch_intraday_bars(token, stk_cd, tic=None, count=200):
+    """분봉 (체결시간, 종가) 리스트(오래된→최신). tic=분 단위(기본 config.TICK_MIN)."""
+    tic = str(tic if tic is not None else config.TICK_MIN)
     try:
         d = _post(CHART_EP, "ka10080", token, {
             "stk_cd": stk_cd,
-            "tic_scope": str(config.TICK_MIN),   # 분봉 단위(1=1분, 3=3분)
+            "tic_scope": tic,                   # 분봉 단위(1=1분, 3=3분)
             "upd_stkpc_tp": "1",
         })
         rows = d.get("stk_min_pole_chart_qry") or []
-        closes = [c for c in (_to_num(r.get("cur_prc")) for r in rows) if c]
-        closes.reverse()
-        return closes[-count:]
+        bars = []
+        for r in rows:
+            c = _to_num(r.get("cur_prc"))
+            if c:
+                bars.append((str(r.get("cntr_tm") or ""), c))
+        bars.reverse()                          # 키움은 최신이 앞 → 오래된→최신
+        return bars[-count:]
     except Exception as e:
-        print(f"[min] {stk_cd} 분봉 실패: {e}", flush=True)
+        print(f"[min] {stk_cd} {tic}분봉 실패: {e}", flush=True)
         return []
+
+
+def fetch_intraday_closes(token, stk_cd, tic=None, count=160):
+    """분봉 종가만(오래된→최신). tic=분 단위(기본 config.TICK_MIN)."""
+    return [c for _, c in fetch_intraday_bars(token, stk_cd, tic=tic, count=count)]
 
 
 # ─────────────────────────── 진단(probe) ───────────────────────────
@@ -165,6 +253,27 @@ def probe(token):
     print(f"종목수: {len(rows)} / 상위5:", flush=True)
     for r in rows[:5]:
         print("  ", {k: r.get(k) for k in ("now_rank", "stk_cd", "stk_nm", "cur_prc")}, flush=True)
+
+    # 급등주 풀용 신규 순위 API 검증
+    print("\n── 전일대비등락률상위(ka10027) ──", flush=True)
+    d27 = _post(RANK_EP, "ka10027", token, {
+        "mrkt_tp": config.MRKT_TP, "sort_tp": "1", "trde_qty_cnd": "0000",
+        "stk_cnd": "0", "crd_cnd": "0", "updown_incls": "1",
+        "pric_cnd": "0", "trde_prica_cnd": "0", "stex_tp": config.STEX_TP})
+    print("keys:", list(d27.keys()), "rc:", d27.get("return_code"), d27.get("return_msg"), flush=True)
+    r27 = d27.get("pred_pre_flu_rt_upper") or []
+    print(f"종목수:{len(r27)} 상위5:", [{k: x.get(k) for k in ('stk_cd', 'stk_nm', 'cur_prc')} for x in r27[:5]], flush=True)
+
+    print("\n── 거래량급증(ka10023) ──", flush=True)
+    d23 = _post(RANK_EP, "ka10023", token, {
+        "mrkt_tp": config.MRKT_TP, "sort_tp": "2", "tm_tp": "2", "trde_qty_tp": "0000",
+        "stk_cnd": "0", "pric_tp": "0", "stex_tp": config.STEX_TP, "tm": "1"})
+    print("keys:", list(d23.keys()), "rc:", d23.get("return_code"), d23.get("return_msg"), flush=True)
+    r23 = d23.get("trde_qty_sdnin") or []
+    print(f"종목수:{len(r23)} 상위5:", [{k: x.get(k) for k in ('stk_cd', 'stk_nm', 'cur_prc')} for x in r23[:5]], flush=True)
+
+    uni = fetch_surge_universe(token)
+    print(f"\n[교집합 급등주 풀] {len(uni)}종목:", uni[:10], flush=True)
 
     code = (rows[0].get("stk_cd") or "").lstrip("A") if rows else "005930"  # 장마감 등으로 비면 삼성전자로 차트 형식 확인
     if True:
