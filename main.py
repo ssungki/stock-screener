@@ -70,10 +70,11 @@ def scan_once(token):
             if sig and _cooldown_ok(code):
                 _last_alert[code] = time.time()
                 hits += 1
+                now_kst = datetime.now(KST).strftime("%H:%M:%S")
                 notifier.notify(
                     f"📈 [수렴→확산] {name} ({code})\n"
                     f"종가 {int(sig['close']):,} / 확산 {sig['expansion_x']}배\n"
-                    f"3분봉 이평 {sig['ma']}"
+                    f"발송 {now_kst} (한국시간)"
                 )
         except Exception as e:
             print(f"[scan] {code} 처리 오류: {e}", flush=True)
