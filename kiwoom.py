@@ -197,17 +197,35 @@ def fetch_surge_universe(token):
 
 # ─────────────────── 일봉 (ka10081) — 추세 필터 ───────────────────
 def fetch_daily_closes(token, stk_cd, count=60):
-    """일봉 종가 리스트(오래된→최신)."""
+    """일봉 종가 리스트(오래된→최신). 기존 호환용."""
+    bars = fetch_daily_bars(token, stk_cd, count=count)
+    return [b["close"] for b in bars]
+
+
+def fetch_daily_bars(token, stk_cd, count=80):
+    """일봉 OHLCV(오래된→최신). 일봉 돌파(박스·추세선) 탐지용.
+    각 row: {date, open, high, low, close, volume}."""
     try:
         d = _post(CHART_EP, "ka10081", token, {
             "stk_cd": stk_cd,
-            "base_dt": datetime.now(KST).strftime("%Y%m%d"),  # 기준일자(오늘) — 빈값이면 안 옴
+            "base_dt": datetime.now(KST).strftime("%Y%m%d"),  # 기준일(오늘) 빈값이면 안 옴
             "upd_stkpc_tp": "1",            # 수정주가 반영
         })
         rows = d.get("stk_dt_pole_chart_qry") or []
-        closes = [c for c in (_to_num(r.get("cur_prc")) for r in rows) if c]
-        closes.reverse()                    # 키움은 최신이 앞 → 오래된→최신
-        return closes[-count:]
+        bars = []
+        for r in rows:
+            c = _to_num(r.get("cur_prc"))
+            o = _to_num(r.get("open_pric"))
+            h = _to_num(r.get("high_pric"))
+            l = _to_num(r.get("low_pric"))
+            v = _to_num(r.get("trde_qty"))
+            if c is None:
+                continue
+            bars.append({"date": str(r.get("dt") or ""),
+                         "open": o or c, "high": h or c,
+                         "low": l or c, "close": c, "volume": v or 0})
+        bars.reverse()                      # 키움은 최신이 앞 → 오래된→최신
+        return bars[-count:]
     except Exception as e:
         print(f"[daily] {stk_cd} 일봉 실패: {e}", flush=True)
         return []

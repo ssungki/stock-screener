@@ -32,6 +32,32 @@ Unit=stock-screener-reporter.service
 WantedBy=timers.target
 EOF
 
+# ── 일봉 돌파 스캔(평일 15:40 KST = 06:40 UTC, 일일리포트 5분 뒤) ──
+sudo tee /etc/systemd/system/stock-screener-breakout.service >/dev/null <<EOF
+[Unit]
+Description=Stock Screener Daily Breakout Scan (Discord)
+
+[Service]
+Type=oneshot
+User=$USER
+WorkingDirectory=$APPDIR
+ExecStart=$APPDIR/.venv/bin/python $APPDIR/main.py post_breakout_scan
+StandardOutput=journal
+StandardError=journal
+EOF
+sudo tee /etc/systemd/system/stock-screener-breakout.timer >/dev/null <<EOF
+[Unit]
+Description=Stock Screener Daily Breakout Scan Timer (Mon-Fri 15:40 KST)
+
+[Timer]
+OnCalendar=Mon..Fri 06:40:00 UTC
+Persistent=true
+Unit=stock-screener-breakout.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
 # ── 주간 리포트(금요일 16:00 KST = 07:00 UTC) ──
 sudo tee /etc/systemd/system/stock-screener-weekly.service >/dev/null <<EOF
 [Unit]
@@ -60,8 +86,9 @@ EOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now stock-screener-reporter.timer
+sudo systemctl enable --now stock-screener-breakout.timer
 sudo systemctl enable --now stock-screener-weekly.timer
 
-echo "=== 리포트 타이머 설치 완료 (일일 평일 15:35 / 주간 금 16:00 KST) ==="
+echo "=== 리포트 타이머 설치 완료 (일일 15:35 / 일봉돌파 15:40 / 주간 금 16:00 KST) ==="
 systemctl list-timers --no-pager | grep stock-screener || true
 echo "=== REPORTER_DONE ==="

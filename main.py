@@ -133,6 +133,57 @@ def replay(token, code):
           + (f" / 첫 신호 {real[0][0][-6:]}" if real else ""), flush=True)
 
 
+def scan_daily_breakouts(token, top_n=300):
+    """거래대금 상위 N에서 일봉 박스권/하락추세선 돌파를 스캔. 알람 후보 리스트 반환.
+    매일 장 마감 후 1회 호출용 — 분당 폴링 X."""
+    stocks = kiwoom.fetch_top_value_codes(token, top_n)
+    print(f"[breakout] 일봉 돌파 스캔 — 후보 {len(stocks)}종목", flush=True)
+    hits = []
+    for code, name in stocks:
+        try:
+            bars = kiwoom.fetch_daily_bars(token, code, count=80)
+            time.sleep(config.REQ_DELAY_SEC)
+            if not bars or len(bars) < 35:
+                continue
+            box = analyzer.detect_box_breakout(bars)
+            trend = analyzer.detect_trendline_breakout(bars)
+            if box:
+                hits.append({"code": code, "name": name, "kind": "BOX", "sig": box})
+            if trend:
+                hits.append({"code": code, "name": name, "kind": "TREND", "sig": trend})
+        except Exception as e:
+            print(f"[breakout] {code} 처리 오류: {e}", flush=True)
+    print(f"[breakout] 완료 — 박스 "
+          f"{sum(1 for h in hits if h['kind']=='BOX')}건 / "
+          f"추세선 {sum(1 for h in hits if h['kind']=='TREND')}건", flush=True)
+    return hits
+
+
+def post_breakout_scan(token):
+    """일봉 돌파 스캔 → 각 종목 ntfy/디스코드 + 헤더 요약."""
+    hits = scan_daily_breakouts(token)
+    today_str = datetime.now(KST).strftime("%Y-%m-%d")
+    if not hits:
+        notifier.send_discord(f"📅 **{today_str} 일봉 돌파 스캔** — 오늘 돌파 종목 없음")
+        return
+    notifier.send_discord(f"📅 **{today_str} 일봉 돌파 스캔** — {len(hits)}건 ↓")
+    for h in hits:
+        s = h["sig"]
+        if h["kind"] == "BOX":
+            text = (f"🟦 [일봉 박스돌파] {h['name']} ({h['code']})\n"
+                    f"종가 {int(s['close']):,} / 박스 "
+                    f"{int(s['box_low']):,}~{int(s['box_high']):,} (폭 {s['box_width_pct']}%)\n"
+                    f"손절가 {int(s['stop_loss']):,} ({s['risk_pct']}%) / "
+                    f"거래량 {s['vol_mult']}배 / {s['lookback_days']}일 박스")
+        else:
+            text = (f"🔻 [일봉 추세선돌파] {h['name']} ({h['code']})\n"
+                    f"종가 {int(s['close']):,} / 추세선값 "
+                    f"{int(s['line_value_today']):,} 돌파\n"
+                    f"손절가 {int(s['stop_loss']):,} ({s['risk_pct']}%) / "
+                    f"거래량 {s['vol_mult']}배 / 직전 고점 {int(s['prior_high']):,}→{int(s['last_high']):,}")
+        notifier.notify(text)
+
+
 def post_weekly_report():
     """이번 주(월~금) SQLite에 쌓인 알람·결과를 부분집단별로 집계해 디스코드 포스트.
     백테스트 outcomes를 미리 SQLite에 저장해뒀기 때문에 API 재호출 불필요(빠름)."""
@@ -370,6 +421,10 @@ def main():
     if arg == "post_weekly_report":
         # python main.py post_weekly_report  — 이번주(월~금) SQLite 데이터로 주간 통계 포스트
         post_weekly_report()
+        return
+    if arg == "post_breakout_scan":
+        # python main.py post_breakout_scan  — 일봉 박스/추세선 돌파 스캔 → ntfy+디스코드
+        post_breakout_scan(token)
         return
     if arg == "backfill":
         # python main.py backfill  — 오늘 journal의 알람들을 SQLite에 채워넣기(과거 알람 보존)
