@@ -118,6 +118,71 @@ def replay(token, code):
           + (f" / 첫 신호 {real[0][0][-6:]}" if real else ""), flush=True)
 
 
+def backtest_today(token, capital=1_000_000):
+    """오늘 떴던 알람을 journalctl에서 긁어, 각 알람 시점에 capital원씩 매수했다고
+    가정하고 현재가로 손익을 계산. 알람의 종가/발송시각은 알림 본문에서 파싱."""
+    import subprocess
+    import re
+    try:
+        raw = subprocess.check_output(
+            ["journalctl", "-u", "stock-screener", "--since", "today", "--no-pager"],
+            text=True, errors="replace")
+    except Exception as e:
+        print(f"[backtest] journalctl 실패: {e}", flush=True)
+        return
+    lines = raw.splitlines()
+    re_head = re.compile(r"\[알림\] 📈 \[수렴→확산\] (.+?) \((\d{6})\)")
+    re_buy  = re.compile(r"종가\s+([\d,]+)\s*/\s*확산\s+([\d.]+)\s*배")
+    re_send = re.compile(r"발송\s+([\d:]+)\s*\(한국시간\)")
+    alerts = []
+    for i, ln in enumerate(lines):
+        m = re_head.search(ln)
+        if not m:
+            continue
+        name, code = m.group(1).strip(), m.group(2)
+        price = exp = send = None
+        for j in range(i + 1, min(i + 6, len(lines))):
+            if (mp := re_buy.search(lines[j])):
+                price = int(mp.group(1).replace(",", ""))
+                exp = float(mp.group(2))
+            if (ms := re_send.search(lines[j])):
+                send = ms.group(1)
+            if price and send:
+                break
+        if price:
+            alerts.append({"send": send or "?", "name": name, "code": code,
+                           "buy": price, "exp": exp})
+    if not alerts:
+        print("[backtest] 오늘 신호 알람 없음(시작 알람만 있거나 아예 없음)", flush=True)
+        return
+    print(f"[backtest] 오늘 신호 {len(alerts)}건 — 각 {capital:,}원 매수 가정\n", flush=True)
+    print(f"{'시각':<10}{'종목':<14}{'코드':<8}{'매수가':>10}{'현재가':>10}{'확산':>7}{'수익률':>9}{'손익(₩)':>14}")
+    print("-" * 82)
+    total_pnl = 0
+    total_capital = 0
+    for a in alerts:
+        cur_closes = kiwoom.fetch_intraday_closes(token, a["code"], tic=1, count=5)
+        cur = int(cur_closes[-1]) if cur_closes else None
+        if cur is None:
+            print(f"{a['send']:<10}{a['name']:<14}{a['code']:<8}{a['buy']:>10,}{'?':>10}{a['exp'] or '?':>7}{'?':>9}{'?':>14}")
+            continue
+        # 같은 종목 cur_prc 스케일은 일관됨 → 비율로 손익 계산
+        ret = (cur - a["buy"]) / a["buy"]
+        # 정수 주수(1주 미만은 살 수 없음)
+        shares = capital // a["buy"]
+        invested = shares * a["buy"]
+        pnl = shares * (cur - a["buy"])
+        total_pnl += pnl
+        total_capital += invested
+        ex = f"{a['exp']:.1f}" if a['exp'] is not None else "?"
+        print(f"{a['send']:<10}{a['name']:<14}{a['code']:<8}{a['buy']:>10,}{cur:>10,}{ex:>7}{ret*100:>8.2f}%{pnl:>+14,}")
+        time.sleep(config.REQ_DELAY_SEC)
+    print("-" * 82)
+    if total_capital:
+        print(f"\n합계: 매수 {total_capital:,}원 → 현재 {total_capital+total_pnl:,}원 "
+              f"= 손익 {total_pnl:+,}원 ({total_pnl/total_capital*100:+.2f}%)")
+
+
 def _market_open():
     now = datetime.now(KST)
     if now.weekday() >= 5:                     # 토(5)·일(6)
@@ -160,6 +225,11 @@ def main():
             print("사용법: python main.py replay <종목코드>  (예: replay 064400)", flush=True)
             return
         replay(token, code)
+        return
+    if arg == "backtest_today":
+        # python main.py backtest_today [원금]  — 오늘 알람마다 N원씩 샀다 가정 손익
+        cap = int(sys.argv[2]) if len(sys.argv) > 2 else 1_000_000
+        backtest_today(token, capital=cap)
         return
 
     notifier.notify(
