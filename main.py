@@ -133,6 +133,66 @@ def replay(token, code):
           + (f" / 첫 신호 {real[0][0][-6:]}" if real else ""), flush=True)
 
 
+def post_weekly_report():
+    """이번 주(월~금) SQLite에 쌓인 알람·결과를 부분집단별로 집계해 디스코드 포스트.
+    백테스트 outcomes를 미리 SQLite에 저장해뒀기 때문에 API 재호출 불필요(빠름)."""
+    if not config.DISCORD_WEBHOOK_URL:
+        print("[weekly] DISCORD_WEBHOOK_URL 없음 — 포스트 안 함", flush=True)
+        return
+    today = datetime.now(KST)
+    monday = today - timedelta(days=today.weekday())
+    dates = [(monday + timedelta(days=i)).strftime("%Y%m%d") for i in range(5)]
+    rows = []
+    for d in dates:
+        rows.extend(storage.fetch_alerts(d))
+    rows = [r for r in rows if r.get("close_pct") is not None]
+    header = f"📅 **주간 통계 {dates[0]}~{dates[-1]}**"
+    if not rows:
+        notifier.send_discord(f"{header}\n이번 주 분석 가능 신호 0건.")
+        print(f"{header}\n신호 없음", flush=True); return
+    n = len(rows)
+    wins = sum(1 for r in rows if (r["close_pct"] or 0) > 0)
+    avg_close = sum(r["close_pct"] for r in rows) / n
+    valid_rule = [r["rule_pct"] for r in rows if r.get("rule_pct") is not None]
+    avg_rule = sum(valid_rule) / len(valid_rule) if valid_rule else 0.0
+    take_cnt = sum(1 for r in rows if r.get("rule_kind") == "TAKE")
+    stop_cnt = sum(1 for r in rows if r.get("rule_kind") == "STOP")
+    hold_cnt = n - take_cnt - stop_cnt
+    def _hour_bucket(t):
+        try: h = int((t or "")[:2])
+        except: return "?"
+        return f"{h:02d}시대"
+    def _exp_bucket(x):
+        if x is None: return "?"
+        if x < 3: return "1.<3배"
+        if x < 5: return "2.3~5배"
+        if x < 10: return "3.5~10배"
+        if x < 20: return "4.10~20배"
+        return "5.>20배"
+    def _agg(get_key):
+        d = {}
+        for r in rows:
+            d.setdefault(get_key(r), []).append(r["close_pct"])
+        return sorted(d.items())
+    def _fmt_group(label, groups):
+        out = [f"\n[{label}]"]
+        for k, vs in groups:
+            w = sum(1 for v in vs if v > 0)
+            out.append(f"  {k:<12} {len(vs):>3}건  승 {w}/{len(vs)} = {w/len(vs)*100:>4.0f}%  평균 {sum(vs)/len(vs)*100:>+6.2f}%")
+        return "\n".join(out)
+    body = (
+        f"신호 {n}건  /  승 {wins}/{n} = {wins/n*100:.1f}%\n"
+        f"종일보유 평균 {avg_close*100:+.2f}%  /  +5%-3%룰 평균 {avg_rule*100:+.2f}% "
+        f"(익절 {take_cnt} / 손절 {stop_cnt} / 미발동 {hold_cnt})"
+        + _fmt_group("시간대별", _agg(lambda r: _hour_bucket(r["time_kst"])))
+        + _fmt_group("확산배수별", _agg(lambda r: _exp_bucket(r.get("expansion_x"))))
+    )
+    msg = f"{header}\n```\n{body}\n```"
+    if len(msg) > 1950: msg = msg[:1950] + "\n... (잘림)```"
+    notifier.send_discord(msg)
+    print(header + "\n" + body, flush=True)
+
+
 def post_daily_report(token, capital=1_000_000):
     """backtest_today 출력을 통째로 캡처해 Discord 웹훅으로 전송."""
     import io
@@ -233,6 +293,12 @@ def backtest_today(token, capital=1_000_000):
         total_capital += invested
         if rule_kind == "TAKE": cnt_take += 1
         elif rule_kind == "STOP": cnt_stop += 1
+        # SQLite outcomes 영속화 — 주간 통계 등 사후 분석용
+        storage.update_outcomes(
+            date_kst=today, time_kst=a["send"].replace(":", ""), code=a["code"],
+            mfe_pct=mfe, mae_pct=mae, mfe_time=max_t, mae_time=min_t,
+            close_pct=cur_ret, rule_kind=rule_kind, rule_pct=rule_ret, rule_time=rule_t,
+        )
         tag = {"TAKE": "✅익절+5", "STOP": "❌손절-3", "HOLD": "⏸️종일보유"}[rule_kind]
         rt = rule_t[-6:-2] if rule_t and len(rule_t) >= 6 else "?"
         mt = max_t[-6:-2] if max_t and len(max_t) >= 6 else "?"
@@ -300,6 +366,10 @@ def main():
     if arg == "post_daily_report":
         # python main.py post_daily_report  — 디스코드 웹훅으로 오늘 백테스트 결과 자동 포스트
         post_daily_report(token, capital=1_000_000)
+        return
+    if arg == "post_weekly_report":
+        # python main.py post_weekly_report  — 이번주(월~금) SQLite 데이터로 주간 통계 포스트
+        post_weekly_report()
         return
     if arg == "backfill":
         # python main.py backfill  — 오늘 journal의 알람들을 SQLite에 채워넣기(과거 알람 보존)
