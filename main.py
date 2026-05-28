@@ -19,6 +19,7 @@ import config
 import kiwoom
 import analyzer
 import notifier
+import storage
 
 KST = timezone(timedelta(hours=9))
 
@@ -89,6 +90,15 @@ def scan_once(token):
                     f"📈 [수렴→확산] {name} ({code})\n"
                     f"종가 {int(sig['close']):,} / 확산 {sig['expansion_x']}배\n"
                     f"발송 {now_kst} (한국시간)"
+                )
+                # SQLite 영구 로깅(VM 죽어도 보존)
+                storage.log_alert(
+                    date_kst=now_dt.strftime("%Y%m%d"),
+                    time_kst=now_dt.strftime("%H%M%S"),
+                    code=code, name=name,
+                    buy_price=sig["close"],
+                    expansion_x=sig["expansion_x"],
+                    recent_min_w=sig["recent_min_width"],
                 )
         except Exception as e:
             print(f"[scan] {code} 처리 오류: {e}", flush=True)
@@ -265,6 +275,36 @@ def main():
         # python main.py backtest_today [원금]  — 오늘 알람마다 N원씩 샀다 가정 손익
         cap = int(sys.argv[2]) if len(sys.argv) > 2 else 1_000_000
         backtest_today(token, capital=cap)
+        return
+    if arg == "backfill":
+        # python main.py backfill  — 오늘 journal의 알람들을 SQLite에 채워넣기(과거 알람 보존)
+        import subprocess, re
+        raw = subprocess.check_output(
+            ["journalctl", "-u", "stock-screener", "--since", "today", "--no-pager"],
+            text=True, errors="replace")
+        lines = raw.splitlines()
+        re_head = re.compile(r"\[알림\] 📈 \[수렴→확산\] (.+?) \((\d{6})\)")
+        re_buy  = re.compile(r"종가\s+([\d,]+)\s*/\s*확산\s+([\d.]+)\s*배")
+        re_send = re.compile(r"발송\s+([\d:]+)\s*\(한국시간\)")
+        today_kst = datetime.now(KST).strftime("%Y%m%d")
+        n = 0
+        for i, ln in enumerate(lines):
+            m = re_head.search(ln)
+            if not m: continue
+            name, code = m.group(1).strip(), m.group(2)
+            price = exp = send = None
+            for j in range(i + 1, min(i + 6, len(lines))):
+                if (mp := re_buy.search(lines[j])):
+                    price = float(mp.group(1).replace(",", ""))
+                    exp = float(mp.group(2))
+                if (ms := re_send.search(lines[j])):
+                    send = ms.group(1)
+                if price and send: break
+            if price and send:
+                storage.log_alert(today_kst, send.replace(":", ""),
+                                  code, name, price, exp, None)
+                n += 1
+        print(f"[backfill] 오늘 알람 {n}건 SQLite 적재(중복은 무시)", flush=True)
         return
 
     notifier.notify(

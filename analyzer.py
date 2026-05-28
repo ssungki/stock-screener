@@ -9,7 +9,13 @@
                   이상으로 터지고, 이평선이 단기 정배열이며, 종가가 직전보다 상승
 이 둘이 동시 충족되는 순간을 '신호'로 본다.
 """
-from config import MA_PERIODS, SQUEEZE_THRESHOLD, EXPANSION_RATIO, DAILY_TREND_MA, LOOKBACK
+from config import (MA_PERIODS, SQUEEZE_THRESHOLD, EXPANSION_RATIO,
+                    DAILY_TREND_MA, LOOKBACK, MIN_BAND_FLOOR, EXPANSION_DISPLAY_CAP)
+
+
+def _expansion_x_disp(width_now, recent_min):
+    """확산배수 표시값 — 수렴이 거의 0일 때 999같은 폭주 방지(분모 클리핑+상한)."""
+    return round(min(width_now / max(recent_min, MIN_BAND_FLOOR), EXPANSION_DISPLAY_CAP), 1)
 
 
 def daily_uptrend(daily_closes):
@@ -93,7 +99,7 @@ def detect(closes, lookback=LOOKBACK):
         return {
             "band_width_now": round(width_now, 5),
             "recent_min_width": round(recent_min, 5),
-            "expansion_x": round(min(width_now / max(recent_min, 1e-6), 999), 1),
+            "expansion_x": _expansion_x_disp(width_now, recent_min),
             "ma": {p: round(m, 1) for p, m in zip(MA_PERIODS, mas_now)},
             "close": closes[now],
         }
@@ -133,7 +139,7 @@ def explain(closes, lookback=LOOKBACK):
         "recent_min_width": round(recent_min, 5),
         "width_prev": round(width_prev, 5),
         "width_now": round(width_now, 5),
-        "expansion_x_vs_min": round(width_now / max(recent_min, 1e-6), 2),
+        "expansion_x_vs_min": _expansion_x_disp(width_now, recent_min),
         "thresholds": {"SQUEEZE": SQUEEZE_THRESHOLD,
                        "EXPANSION": EXPANSION_RATIO,
                        "expand_floor(필요width)": round(max(SQUEEZE_THRESHOLD, recent_min * EXPANSION_RATIO), 5)},
