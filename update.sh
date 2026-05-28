@@ -38,3 +38,20 @@ fi
 
 echo "$NEW" > .last_update_md5
 echo "$TS [update] 갱신 완료 (md5=${NEW:0:8})"
+
+# install_reporter.sh 변경 감지 → 자동 재실행(새 systemd 타이머 자동 반영)
+for inst in install_reporter.sh; do
+    [ -f "$inst" ] || continue
+    H_FILE=".${inst%.sh}_md5"
+    NEW_H="$(md5sum "$inst" | awk '{print $1}')"
+    LAST_H="$(cat "$H_FILE" 2>/dev/null || true)"
+    if [ "$NEW_H" != "$LAST_H" ]; then
+        chmod +x "$inst"
+        if sudo /bin/bash "$APPDIR/$inst"; then
+            echo "$NEW_H" > "$H_FILE"
+            echo "$TS [update] $inst 자동 재실행 완료"
+        else
+            echo "$TS [update] $inst 실행 실패(권한? sudoers 확인)"
+        fi
+    fi
+done

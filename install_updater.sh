@@ -7,9 +7,11 @@ set -e
 APPDIR="$HOME/stock-screener"
 chmod +x "$APPDIR/update.sh"
 
-# sudoers: opc 가 패스워드 없이 stock-screener 재시작만 가능(다른 명령 X)
+# sudoers: opc 가 패스워드 없이 (1) stock-screener 재시작 (2) install_reporter.sh 실행만 가능.
+# install_*.sh 자동 재실행으로 systemd 타이머 변경도 우편함이 처리하게 함(최소권한 유지).
 sudo tee /etc/sudoers.d/stock-screener-updater >/dev/null <<'SUDOERS'
 opc ALL=(root) NOPASSWD: /bin/systemctl restart stock-screener
+opc ALL=(root) NOPASSWD: /bin/bash /home/opc/stock-screener/install_reporter.sh
 SUDOERS
 sudo chmod 0440 /etc/sudoers.d/stock-screener-updater
 
