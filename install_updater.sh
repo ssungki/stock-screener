@@ -47,6 +47,15 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now stock-screener-updater.timer
 
 echo "=== 우편함 설치 완료 ==="
+# 사용자 sudoers 변경 즉시 적용을 위해 install_reporter.sh도 같은 실행에서 한 번 돌림
+# (지금 sudoers에 막 NOPASSWD 등록했으니 바로 됨)
+if [ -f "$APPDIR/install_reporter.sh" ]; then
+    chmod +x "$APPDIR/install_reporter.sh"
+    echo "=== install_reporter.sh 동시 실행(타이머 일괄 등록) ==="
+    sudo /bin/bash "$APPDIR/install_reporter.sh" || echo "install_reporter.sh 실패 — 권한 확인"
+    # md5 기록(update.sh 가 중복 실행 안 하게)
+    md5sum "$APPDIR/install_reporter.sh" | awk '{print $1}' > "$APPDIR/.install_reporter_md5"
+fi
 systemctl list-timers --no-pager | grep stock-screener || true
 echo "=== 즉시 1회 실행 ==="
 sudo /bin/systemctl start stock-screener-updater.service
