@@ -76,10 +76,15 @@ def scan_once(token):
             time.sleep(config.REQ_DELAY_SEC)
             if not analyzer.squeeze_present(c_sq):
                 continue
+            # 장 초반 변동성 구간(09:00~09:15 등) 알람 보류 — 가짜 돌파 다발 구간
+            now_dt = datetime.now(KST)
+            hm_now = now_dt.hour * 60 + now_dt.minute
+            if hm_now < config.MARKET_OPEN_HM + config.NO_ALERT_FIRST_MIN:
+                continue
             if _cooldown_ok(code):
                 _last_alert[code] = time.time()
                 hits += 1
-                now_kst = datetime.now(KST).strftime("%H:%M:%S")
+                now_kst = now_dt.strftime("%H:%M:%S")
                 notifier.notify(
                     f"📈 [수렴→확산] {name} ({code})\n"
                     f"종가 {int(sig['close']):,} / 확산 {sig['expansion_x']}배\n"

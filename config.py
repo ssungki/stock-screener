@@ -57,3 +57,4 @@ MRKT_TP           = get("MRKT_TP", "000")                # 000:전체 001:코스
 STEX_TP           = get("STEX_TP", "1")                  # 1:KRX 2:NXT 3:통합
 MARKET_OPEN_HM    = int(get("MARKET_OPEN_HM", "540"))    # 09:00 = 9*60
 MARKET_CLOSE_HM   = int(get("MARKET_CLOSE_HM", "930"))   # 15:30 = 15*60+30
+NO_ALERT_FIRST_MIN = int(get("NO_ALERT_FIRST_MIN", "15")) # 장 초반 N분 알람 보류(변동성 구간)
