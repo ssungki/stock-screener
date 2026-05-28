@@ -133,6 +133,27 @@ def replay(token, code):
           + (f" / 첫 신호 {real[0][0][-6:]}" if real else ""), flush=True)
 
 
+def post_daily_report(token, capital=1_000_000):
+    """backtest_today 출력을 통째로 캡처해 Discord 웹훅으로 전송."""
+    import io
+    import contextlib
+    if not config.DISCORD_WEBHOOK_URL:
+        print("[report] DISCORD_WEBHOOK_URL 없음 — 포스트 안 함", flush=True)
+        return
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        backtest_today(token, capital=capital)
+    body = buf.getvalue().rstrip()
+    # Discord 메시지 한도 2000자. 코드블록 래퍼 길이 감안 ~1850자로 자름.
+    if len(body) > 1850:
+        body = body[:1850] + "\n... (잘림)"
+    header = f"📊 **{datetime.now(KST).strftime('%Y-%m-%d')} 일일 리포트**"
+    notifier.send_discord(f"{header}\n```\n{body}\n```")
+    # 콘솔에도 그대로 출력해 journal에 남기기
+    print(header, flush=True)
+    print(body, flush=True)
+
+
 def backtest_today(token, capital=1_000_000):
     """오늘 떴던 알람을 journalctl에서 긁어, 각 알람 시점에 capital원씩 매수했다고
     가정하고 현재가로 손익을 계산. 알람의 종가/발송시각은 알림 본문에서 파싱."""
@@ -275,6 +296,10 @@ def main():
         # python main.py backtest_today [원금]  — 오늘 알람마다 N원씩 샀다 가정 손익
         cap = int(sys.argv[2]) if len(sys.argv) > 2 else 1_000_000
         backtest_today(token, capital=cap)
+        return
+    if arg == "post_daily_report":
+        # python main.py post_daily_report  — 디스코드 웹훅으로 오늘 백테스트 결과 자동 포스트
+        post_daily_report(token, capital=1_000_000)
         return
     if arg == "backfill":
         # python main.py backfill  — 오늘 journal의 알람들을 SQLite에 채워넣기(과거 알람 보존)
