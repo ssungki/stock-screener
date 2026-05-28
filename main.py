@@ -160,32 +160,62 @@ def backtest_today(token, capital=1_000_000):
     if not alerts:
         print("[backtest] 오늘 신호 알람 없음(시작 알람만 있거나 아예 없음)", flush=True)
         return
-    print(f"[backtest] 오늘 신호 {len(alerts)}건 — 각 {capital:,}원 매수 가정\n", flush=True)
-    print(f"{'시각':<10}{'종목':<14}{'코드':<8}{'매수가':>10}{'현재가':>10}{'확산':>7}{'수익률':>9}{'손익(₩)':>14}")
-    print("-" * 82)
-    total_pnl = 0
+    today = datetime.now(KST).strftime("%Y%m%d")
+    TAKE_PROFIT = 0.05    # +5% 익절
+    STOP_LOSS   = -0.03   # -3% 손절
+    print(f"[backtest] 오늘 신호 {len(alerts)}건 — 각 {capital:,}원 매수 / 익절+5% 손절-3% 룰 시뮬\n", flush=True)
+    print(f"{'시각':<10}{'종목':<10}{'코드':<7}{'매수':>8}{'현재':>8}{'현재%':>8}{'MFE%':>8}{'MAE%':>8}  룰결과 (시각 / 최고시각·최저시각)")
+    print("-" * 110)
+    total_now_pnl = 0
+    total_rule_pnl = 0
     total_capital = 0
+    cnt_take = cnt_stop = 0
     for a in alerts:
-        cur_closes = kiwoom.fetch_intraday_closes(token, a["code"], tic=1, count=5)
-        cur = int(cur_closes[-1]) if cur_closes else None
-        if cur is None:
-            print(f"{a['send']:<10}{a['name']:<14}{a['code']:<8}{a['buy']:>10,}{'?':>10}{a['exp'] or '?':>7}{'?':>9}{'?':>14}")
+        bars = kiwoom.fetch_intraday_bars(token, a["code"], tic=1, count=400)
+        alert_ts = today + (a["send"] or "").replace(":", "")
+        post = [(t, c) for (t, c) in bars if t and t >= alert_ts]
+        time.sleep(config.REQ_DELAY_SEC)
+        if not post:
+            print(f"{a['send']:<10}{a['name']:<10}{a['code']:<7}{a['buy']:>8,}{'?':>8}{'?':>8}{'?':>8}{'?':>8}  (데이터없음)")
             continue
-        # 같은 종목 cur_prc 스케일은 일관됨 → 비율로 손익 계산
-        ret = (cur - a["buy"]) / a["buy"]
-        # 정수 주수(1주 미만은 살 수 없음)
+        cur = int(post[-1][1])
+        cur_ret = (cur - a["buy"]) / a["buy"]
+        # MFE/MAE = 알람 후 최고/최저 도달 종가
+        max_t, max_c = max(post, key=lambda x: x[1])
+        min_t, min_c = min(post, key=lambda x: x[1])
+        mfe = (max_c - a["buy"]) / a["buy"]
+        mae = (min_c - a["buy"]) / a["buy"]
+        # 룰 시뮬: 시간순으로 +5%·-3% 중 먼저 닿는 쪽이 청산
+        rule_kind, rule_t, rule_ret = "HOLD", post[-1][0], cur_ret
+        for t, c in post:
+            pct = (c - a["buy"]) / a["buy"]
+            if pct <= STOP_LOSS:
+                rule_kind, rule_t, rule_ret = "STOP", t, STOP_LOSS; break
+            if pct >= TAKE_PROFIT:
+                rule_kind, rule_t, rule_ret = "TAKE", t, TAKE_PROFIT; break
         shares = capital // a["buy"]
         invested = shares * a["buy"]
-        pnl = shares * (cur - a["buy"])
-        total_pnl += pnl
+        now_pnl = shares * (cur - a["buy"])
+        rule_pnl = int(invested * rule_ret)
+        total_now_pnl += now_pnl
+        total_rule_pnl += rule_pnl
         total_capital += invested
-        ex = f"{a['exp']:.1f}" if a['exp'] is not None else "?"
-        print(f"{a['send']:<10}{a['name']:<14}{a['code']:<8}{a['buy']:>10,}{cur:>10,}{ex:>7}{ret*100:>8.2f}%{pnl:>+14,}")
-        time.sleep(config.REQ_DELAY_SEC)
-    print("-" * 82)
+        if rule_kind == "TAKE": cnt_take += 1
+        elif rule_kind == "STOP": cnt_stop += 1
+        tag = {"TAKE": "✅익절+5", "STOP": "❌손절-3", "HOLD": "⏸️종일보유"}[rule_kind]
+        rt = rule_t[-6:-2] if rule_t and len(rule_t) >= 6 else "?"
+        mt = max_t[-6:-2] if max_t and len(max_t) >= 6 else "?"
+        nt = min_t[-6:-2] if min_t and len(min_t) >= 6 else "?"
+        print(f"{a['send']:<10}{a['name']:<10}{a['code']:<7}{a['buy']:>8,}{cur:>8,}"
+              f"{cur_ret*100:>+7.2f}%{mfe*100:>+7.2f}%{mae*100:>+7.2f}%  "
+              f"{tag}@{rt} (최고{mt}/최저{nt})")
+    print("-" * 110)
     if total_capital:
-        print(f"\n합계: 매수 {total_capital:,}원 → 현재 {total_capital+total_pnl:,}원 "
-              f"= 손익 {total_pnl:+,}원 ({total_pnl/total_capital*100:+.2f}%)")
+        print(f"\n[종일 보유]   손익 {total_now_pnl:+,}원  ({total_now_pnl/total_capital*100:+.2f}%)")
+        print(f"[+5%/-3% 룰] 손익 {total_rule_pnl:+,}원  ({total_rule_pnl/total_capital*100:+.2f}%)  "
+              f"— 익절 {cnt_take}회 / 손절 {cnt_stop}회 / 미발동 {len(alerts) - cnt_take - cnt_stop}회")
+        diff = total_rule_pnl - total_now_pnl
+        print(f"\n청산룰 효과: {diff:+,}원  ({diff/total_capital*100:+.2f}%p)")
 
 
 def _market_open():
