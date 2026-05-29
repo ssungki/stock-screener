@@ -164,9 +164,9 @@ def post_breakout_scan(token):
     hits = scan_daily_breakouts(token)
     today_str = datetime.now(KST).strftime("%Y-%m-%d")
     if not hits:
-        notifier.send_discord(f"📅 **{today_str} 일봉 돌파 스캔** — 오늘 돌파 종목 없음")
+        notifier.send_discord(f"🟩 **[일봉 돌파] {today_str} 박스·추세선 스캔** — 오늘 돌파 종목 없음\n_며칠~몇 주 보유 전제 / 손절선 구조적 명시_")
         return
-    notifier.send_discord(f"📅 **{today_str} 일봉 돌파 스캔** — {len(hits)}건 ↓")
+    notifier.send_discord(f"🟩 **[일봉 돌파] {today_str} 박스·추세선 스캔** — {len(hits)}건 ↓\n_며칠~몇 주 보유 전제 / 손절선 구조적 명시_")
     for h in hits:
         s = h["sig"]
         if h["kind"] == "BOX":
@@ -197,7 +197,7 @@ def post_weekly_report():
     for d in dates:
         rows.extend(storage.fetch_alerts(d))
     rows = [r for r in rows if r.get("close_pct") is not None]
-    header = f"📅 **주간 통계 {dates[0]}~{dates[-1]}**"
+    header = f"🟧 **[3분봉 수렴→확산] 주간 통계 {dates[0]}~{dates[-1]}**"
     if not rows:
         notifier.send_discord(f"{header}\n이번 주 분석 가능 신호 0건.")
         print(f"{header}\n신호 없음", flush=True); return
@@ -258,7 +258,7 @@ def post_daily_report(token, capital=1_000_000):
     # Discord 메시지 한도 2000자. 코드블록 래퍼 길이 감안 ~1850자로 자름.
     if len(body) > 1850:
         body = body[:1850] + "\n... (잘림)"
-    header = f"📊 **{datetime.now(KST).strftime('%Y-%m-%d')} 일일 리포트**"
+    header = f"🟧 **[3분봉 수렴→확산] {datetime.now(KST).strftime('%Y-%m-%d')} 일일 백테스트**\n_장중 단타 신호 / 알람당 100만원 매수 가정_"
     notifier.send_discord(f"{header}\n```\n{body}\n```")
     # 콘솔에도 그대로 출력해 journal에 남기기
     print(header, flush=True)
