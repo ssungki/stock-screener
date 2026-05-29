@@ -4,7 +4,9 @@
 # - opc 사용자에게 stock-screener 재시작만 NOPASSWD 권한 부여(최소권한)
 # - systemd updater.service + updater.timer 등록(5분마다)
 set -e
-APPDIR="$HOME/stock-screener"
+# sudo 실행 시 $HOME 이 /root 로 리셋되는 문제 회피 — 스크립트 위치 기반.
+APPDIR="$(cd "$(dirname "$0")" && pwd)"
+SVC_USER="${SUDO_USER:-$USER}"
 chmod +x "$APPDIR/update.sh"
 
 # sudoers: opc 가 패스워드 없이 (1) stock-screener 재시작 (2) install_reporter.sh 실행만 가능.
@@ -22,7 +24,7 @@ Description=Stock Screener Auto Update (GitHub pull)
 
 [Service]
 Type=oneshot
-User=$USER
+User=$SVC_USER
 WorkingDirectory=$APPDIR
 ExecStart=/bin/bash $APPDIR/update.sh
 StandardOutput=journal

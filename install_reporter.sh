@@ -3,7 +3,10 @@
 # `post_daily_report` = 그날 신호·MFE/MAE·룰결과를 디스코드에 표로 포스트(매일).
 # `post_weekly_report` = 이번 주 SQLite 집계(시간대별·확산배수별)를 포스트(매주 금).
 set -e
-APPDIR="$HOME/stock-screener"
+# sudo 로 실행시 $HOME 이 /root 로 바뀌어 잘못된 경로가 박히는 버그 방지 —
+# 스크립트가 놓인 자리에서 APPDIR 을 자동 계산하고, User= 는 SUDO_USER 우선.
+APPDIR="$(cd "$(dirname "$0")" && pwd)"
+SVC_USER="${SUDO_USER:-$USER}"
 
 sudo tee /etc/systemd/system/stock-screener-reporter.service >/dev/null <<EOF
 [Unit]
@@ -11,7 +14,7 @@ Description=Stock Screener Daily Report (Discord webhook post)
 
 [Service]
 Type=oneshot
-User=$USER
+User=$SVC_USER
 WorkingDirectory=$APPDIR
 ExecStart=$APPDIR/.venv/bin/python $APPDIR/main.py post_daily_report
 StandardOutput=journal
@@ -39,7 +42,7 @@ Description=Stock Screener Daily Breakout Scan (Discord)
 
 [Service]
 Type=oneshot
-User=$USER
+User=$SVC_USER
 WorkingDirectory=$APPDIR
 ExecStart=$APPDIR/.venv/bin/python $APPDIR/main.py post_breakout_scan
 StandardOutput=journal
@@ -65,7 +68,7 @@ Description=Stock Screener Weekly Report (Discord)
 
 [Service]
 Type=oneshot
-User=$USER
+User=$SVC_USER
 WorkingDirectory=$APPDIR
 ExecStart=$APPDIR/.venv/bin/python $APPDIR/main.py post_weekly_report
 StandardOutput=journal
