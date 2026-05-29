@@ -147,9 +147,11 @@ def scan_daily_breakouts(token, top_n=300):
                 continue
             box = analyzer.detect_box_breakout(bars)
             trend = analyzer.detect_trendline_breakout(bars)
-            if box:
+            # 손절 위험 -7% 초과(=손절선이 너무 멈) 신호는 비실용이라 제외
+            MAX_RISK_PCT = -7.0
+            if box and box.get("risk_pct", -100) >= MAX_RISK_PCT:
                 hits.append({"code": code, "name": name, "kind": "BOX", "sig": box})
-            if trend:
+            if trend and trend.get("risk_pct", -100) >= MAX_RISK_PCT:
                 hits.append({"code": code, "name": name, "kind": "TREND", "sig": trend})
         except Exception as e:
             print(f"[breakout] {code} 처리 오류: {e}", flush=True)

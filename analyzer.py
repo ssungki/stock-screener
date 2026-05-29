@@ -107,7 +107,7 @@ def detect(closes, lookback=LOOKBACK):
 
 
 def detect_box_breakout(bars, lookback=30, breakout_buf=0.001,
-                        vol_mult_req=1.3, box_min=0.03, box_max=0.20):
+                        vol_mult_req=1.5, box_min=0.03, box_max=0.10):
     """일봉 박스권 상단 돌파 — 'bars'는 fetch_daily_bars 결과(오래된→최신, OHLCV dict).
 
     조건:
@@ -148,7 +148,7 @@ def detect_box_breakout(bars, lookback=30, breakout_buf=0.001,
 
 
 def detect_trendline_breakout(bars, lookback=40, swing_k=2,
-                              vol_mult_req=1.3, min_slope_pct=-0.05):
+                              vol_mult_req=1.5, min_slope_pct=-0.05):
     """일봉 하락추세선 돌파 — 'lower highs' 두 점을 잇는 선을 오늘 종가가 뚫음.
 
     swing_k: swing high 정의 — 좌우 swing_k봉보다 모두 높은 봉.
@@ -198,8 +198,9 @@ def detect_trendline_breakout(bars, lookback=40, swing_k=2,
     vol_mult = cur["volume"] / avg_vol if avg_vol > 0 else 0
     if vol_mult < vol_mult_req:
         return None
-    # 손절선 = 최근 10봉 저가 최저 (구조적 지지)
-    stop = min(b["low"] for b in rng[-10:])
+    # 손절선 = 추세선값 3% 아래 (구조적 손절: 라인 도로 깨지면 잘못된 돌파)
+    # 기존 "10봉 swing low"는 일봉에선 너무 멀어 비실용적이라 폐기.
+    stop = round(line_now * 0.97)
     return {
         "kind": "TRENDLINE_BREAKOUT",
         "close": cur["close"],
