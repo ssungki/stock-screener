@@ -50,3 +50,34 @@ for inst in install_reporter.sh; do
         fi
     fi
 done
+
+# 3) triggers/ 처리 — 매니저가 디스코드 요청을 GitHub push로 보낸 일회성 명령.
+#    파일명: triggers/<ts>_<command>.flag   내용: command 한 줄
+#    화이트리스트만 허용. 처리한 flag basename은 .processed_triggers 에 기록(중복 방지).
+if [ -d "$APPDIR/triggers" ]; then
+    PROCESSED="$APPDIR/.processed_triggers"
+    touch "$PROCESSED"
+    ALLOWED="post_daily_report post_weekly_report post_breakout_scan backfill"
+    shopt -s nullglob
+    for flag in "$APPDIR"/triggers/*.flag; do
+        base="$(basename "$flag")"
+        if grep -qxF "$base" "$PROCESSED"; then
+            continue
+        fi
+        cmd="$(head -n1 "$flag" | tr -d '[:space:]')"
+        ok=0
+        for a in $ALLOWED; do [ "$a" = "$cmd" ] && ok=1; done
+        if [ "$ok" != "1" ]; then
+            echo "$TS [trigger] 화이트리스트 외 명령 거부: $cmd ($base)"
+            echo "$base" >> "$PROCESSED"
+            continue
+        fi
+        echo "$TS [trigger] $base → $cmd 즉시 실행"
+        if "$APPDIR/.venv/bin/python" "$APPDIR/main.py" "$cmd" >>"$APPDIR/.trigger.log" 2>&1; then
+            echo "$TS [trigger] $cmd 완료(.trigger.log)"
+        else
+            echo "$TS [trigger] $cmd 실패(.trigger.log 확인)"
+        fi
+        echo "$base" >> "$PROCESSED"
+    done
+fi
