@@ -5,9 +5,9 @@
 # 동작: triggers/<ts>_<cmd>.flag 파일을 만들어 git push.
 #       5분 내 stock-screener-updater.timer 가 pull → update.sh 가 cmd 1회 실행.
 set -e
-cmd="${1:?command required (post_daily_report|post_weekly_report|post_breakout_scan|backfill)}"
+cmd="${1:?command required (post_daily_report|post_weekly_report|post_total_report|post_breakout_scan|backfill)}"
 case "$cmd" in
-    post_daily_report|post_weekly_report|post_breakout_scan|backfill) ;;
+    post_daily_report|post_weekly_report|post_total_report|post_breakout_scan|backfill) ;;
     *) echo "지원되지 않는 명령: $cmd"; exit 1 ;;
 esac
 

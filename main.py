@@ -198,6 +198,84 @@ def post_breakout_scan(token):
         notifier.notify(text)
 
 
+def post_total_report():
+    """봇 시작일~오늘까지 SQLite 전체 알람을 한 번에 집계. 2026-06-08 사장님 요청.
+
+    weekly_report 와 동일한 부분집단별 분석(시간대·확산배수)에 더해
+    날짜별 신호 수도 함께 보여 빈도 진단을 돕는다.
+    """
+    if not config.DISCORD_WEBHOOK_URL:
+        print("[total] DISCORD_WEBHOOK_URL 없음 — 포스트 안 함", flush=True)
+        return
+    # 모든 날짜 끌어와 합치기
+    dates = [d for d, _ in storage.recent_dates(limit=100)]
+    rows = []
+    for d in dates:
+        rows.extend(storage.fetch_alerts(d))
+    analyzed = [r for r in rows if r.get("close_pct") is not None]
+    header = f"🟧 **[3분봉 수렴→확산] 누적 통계 — 첫날~오늘 ({len(dates)}영업일)**"
+    if not analyzed:
+        notifier.send_discord(f"{header}\n누적 분석 가능 신호 0건.")
+        return
+    n = len(analyzed)
+    wins = sum(1 for r in analyzed if (r["close_pct"] or 0) > 0)
+    avg_close = sum(r["close_pct"] for r in analyzed) / n
+    valid_rule = [r["rule_pct"] for r in analyzed if r.get("rule_pct") is not None]
+    avg_rule = sum(valid_rule) / len(valid_rule) if valid_rule else 0.0
+    take_cnt = sum(1 for r in analyzed if r.get("rule_kind") == "TAKE")
+    stop_cnt = sum(1 for r in analyzed if r.get("rule_kind") == "STOP")
+    hold_cnt = n - take_cnt - stop_cnt
+
+    def _hour_bucket(t):
+        try: h = int((t or "")[:2])
+        except: return "?"
+        return f"{h:02d}시대"
+
+    def _exp_bucket(x):
+        if x is None: return "?"
+        if x < 3: return "1.<3배"
+        if x < 5: return "2.3~5배"
+        if x < 10: return "3.5~10배"
+        if x < 20: return "4.10~20배"
+        return "5.>20배"
+
+    def _agg(get_key):
+        d = {}
+        for r in analyzed:
+            d.setdefault(get_key(r), []).append(r["close_pct"])
+        return sorted(d.items())
+
+    def _fmt_group(label, groups):
+        out = [f"\n[{label}]"]
+        for k, vs in groups:
+            w = sum(1 for v in vs if v > 0)
+            out.append(f"  {k:<12} {len(vs):>3}건  승 {w}/{len(vs)} = {w/len(vs)*100:>4.0f}%  평균 {sum(vs)/len(vs)*100:>+6.2f}%")
+        return "\n".join(out)
+
+    # 일별 빈도
+    by_date = {}
+    for r in rows:
+        by_date.setdefault(r["date_kst"], 0)
+        by_date[r["date_kst"]] += 1
+    daily_lines = ["\n[일별 신호수]"]
+    for d in sorted(by_date.keys()):
+        daily_lines.append(f"  {d}  {by_date[d]:>3}건")
+
+    body = (
+        f"전체 신호 {len(rows)}건 (분석가능 {n}건)  /  승 {wins}/{n} = {wins/n*100:.1f}%\n"
+        f"종일보유 평균 {avg_close*100:+.2f}%  /  +5%-3%룰 평균 {avg_rule*100:+.2f}% "
+        f"(익절 {take_cnt} / 손절 {stop_cnt} / 미발동 {hold_cnt})"
+        + "\n".join(daily_lines)
+        + _fmt_group("시간대별", _agg(lambda r: _hour_bucket(r["time_kst"])))
+        + _fmt_group("확산배수별", _agg(lambda r: _exp_bucket(r.get("expansion_x"))))
+    )
+    msg = f"{header}\n```\n{body}\n```"
+    if len(msg) > 1950:
+        msg = msg[:1950] + "\n... (잘림)```"
+    notifier.send_discord(msg)
+    print(header + "\n" + body, flush=True)
+
+
 def post_weekly_report():
     """이번 주(월~금) SQLite에 쌓인 알람·결과를 부분집단별로 집계해 디스코드 포스트.
     백테스트 outcomes를 미리 SQLite에 저장해뒀기 때문에 API 재호출 불필요(빠름)."""
@@ -435,6 +513,10 @@ def main():
     if arg == "post_weekly_report":
         # python main.py post_weekly_report  — 이번주(월~금) SQLite 데이터로 주간 통계 포스트
         post_weekly_report()
+        return
+    if arg == "post_total_report":
+        # python main.py post_total_report  — 봇 첫날~오늘 누적 통계
+        post_total_report()
         return
     if arg == "post_breakout_scan":
         # python main.py post_breakout_scan  — 일봉 박스/추세선 돌파 스캔 → ntfy+디스코드
