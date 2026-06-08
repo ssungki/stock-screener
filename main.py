@@ -147,17 +147,22 @@ def scan_daily_breakouts(token, top_n=300):
                 continue
             box = analyzer.detect_box_breakout(bars)
             trend = analyzer.detect_trendline_breakout(bars)
+            resist = analyzer.detect_resistance_plus4(bars)
             # 손절 위험 -7% 초과(=손절선이 너무 멈) 신호는 비실용이라 제외
             MAX_RISK_PCT = -7.0
             if box and box.get("risk_pct", -100) >= MAX_RISK_PCT:
                 hits.append({"code": code, "name": name, "kind": "BOX", "sig": box})
             if trend and trend.get("risk_pct", -100) >= MAX_RISK_PCT:
                 hits.append({"code": code, "name": name, "kind": "TREND", "sig": trend})
+            if resist and resist.get("risk_pct", -100) >= MAX_RISK_PCT:
+                hits.append({"code": code, "name": name, "kind": "RESIST4", "sig": resist})
         except Exception as e:
             print(f"[breakout] {code} 처리 오류: {e}", flush=True)
     print(f"[breakout] 완료 — 박스 "
           f"{sum(1 for h in hits if h['kind']=='BOX')}건 / "
-          f"추세선 {sum(1 for h in hits if h['kind']=='TREND')}건", flush=True)
+          f"추세선 {sum(1 for h in hits if h['kind']=='TREND')}건 / "
+          f"저항+4% {sum(1 for h in hits if h['kind']=='RESIST4')}건",
+          flush=True)
     return hits
 
 
@@ -177,12 +182,19 @@ def post_breakout_scan(token):
                     f"{int(s['box_low']):,}~{int(s['box_high']):,} (폭 {s['box_width_pct']}%)\n"
                     f"손절가 {int(s['stop_loss']):,} ({s['risk_pct']}%) / "
                     f"거래량 {s['vol_mult']}배 / {s['lookback_days']}일 박스")
-        else:
+        elif h["kind"] == "TREND":
             text = (f"🔻 [일봉 추세선돌파] {h['name']} ({h['code']})\n"
                     f"종가 {int(s['close']):,} / 추세선값 "
                     f"{int(s['line_value_today']):,} 돌파\n"
                     f"손절가 {int(s['stop_loss']):,} ({s['risk_pct']}%) / "
                     f"거래량 {s['vol_mult']}배 / 직전 고점 {int(s['prior_high']):,}→{int(s['last_high']):,}")
+        else:   # RESIST4 — 종가베팅 후보
+            text = (f"⭐ [저항+4% 종가베팅] {h['name']} ({h['code']})\n"
+                    f"종가 {int(s['close']):,} / 저항선 "
+                    f"{int(s['resistance']):,} (+{s['pct_above_resist']}%)\n"
+                    f"손절가 {int(s['stop_loss']):,} ({s['risk_pct']}%) / "
+                    f"거래량 {s['vol_mult']}배 / {s['lookback_days']}일 lookback\n"
+                    f"_종가 매수 → 다음날 시초가 매도 패턴 가정_")
         notifier.notify(text)
 
 

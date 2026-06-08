@@ -215,6 +215,65 @@ def detect_trendline_breakout(bars, lookback=40, swing_k=2,
     }
 
 
+def detect_resistance_plus4(bars, lookback=60, swing_k=2,
+                            min_pct_above=0.04, vol_mult_req=1.5):
+    """저항선 + 4% 돌파(종가베팅 후보).
+
+    영상 '저항선에서 4% 이상 멀어지면 급등' 패턴 (2026-06-08 사장님 요청).
+    - lookback일 내 swing high 들 중 '의미 있는 저항선' = 최근 가장 가까운 swing high
+      (단, 현재 종가보다 낮은 것이어야 — 저항을 '뚫고 위로 올라간' 상태가 핵심)
+    - 종가 ≥ 저항선 × (1 + min_pct_above)  →  4% 이상 멀어짐
+    - 거래량 ≥ 직전 20일 평균 × vol_mult_req
+    - 어제 종가는 저항선을 4% 이상 못 떨어트림 (오늘 처음으로 4% 돌파)
+    """
+    if len(bars) < lookback + 5:
+        return None
+    rng = bars[-lookback - 1:-1]
+    cur = bars[-1]
+    prev = bars[-2]
+    # swing highs
+    swings = []
+    for i in range(swing_k, len(rng) - swing_k):
+        hi = rng[i]["high"]
+        if all(hi > rng[i - k]["high"] for k in range(1, swing_k + 1)) and \
+           all(hi > rng[i + k]["high"] for k in range(1, swing_k + 1)):
+            swings.append((i, hi))
+    if not swings:
+        return None
+    # 현재 종가보다 낮으면서 가장 가까운(시간상 최근) swing high = 저항선
+    resistance = None
+    for i, hi in reversed(swings):
+        if hi < cur["close"]:
+            resistance = hi
+            break
+    if resistance is None or resistance <= 0:
+        return None
+    pct_above = (cur["close"] - resistance) / resistance
+    if pct_above < min_pct_above:
+        return None
+    # 어제까지는 아직 4% 멀어지지 않았어야(=오늘 막 신호 발생)
+    prev_pct = (prev["close"] - resistance) / resistance
+    if prev_pct >= min_pct_above:
+        return None
+    # 거래량
+    avg_vol = sum(b["volume"] for b in rng[-20:]) / 20
+    vol_mult = cur["volume"] / avg_vol if avg_vol > 0 else 0
+    if vol_mult < vol_mult_req:
+        return None
+    # 손절선 = 저항선 (저항선이 깨지면 가짜 돌파)
+    stop = round(resistance)
+    return {
+        "kind": "RESIST_PLUS4",
+        "close": cur["close"],
+        "resistance": round(resistance, 2),
+        "pct_above_resist": round(pct_above * 100, 2),
+        "stop_loss": stop,
+        "risk_pct": round((stop - cur["close"]) / cur["close"] * 100, 2),
+        "vol_mult": round(vol_mult, 2),
+        "lookback_days": lookback,
+    }
+
+
 def explain(closes, lookback=LOOKBACK):
     """detect()의 모든 중간값·조건 통과여부를 dict로 반환(진단용).
     신호가 떴든 안 떴든 '왜 그런지' 숫자로 보여준다."""
