@@ -82,6 +82,10 @@ def scan_once(token):
             hm_now = now_dt.hour * 60 + now_dt.minute
             if hm_now < config.MARKET_OPEN_HM + config.NO_ALERT_FIRST_MIN:
                 continue
+            # 2026-06-09: 누적 5영업일 데이터 분석 결과 09시대만 승률 88% +4.60%, 그 외 시간대는
+            # 1/0/0/50% 로 사실상 노이즈. 10:00 이후 신호는 컷.
+            if hm_now >= config.ALERT_LATE_CUT_HM:
+                continue
             if _cooldown_ok(code):
                 _last_alert[code] = time.time()
                 hits += 1

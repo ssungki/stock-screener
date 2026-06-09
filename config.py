@@ -60,3 +60,5 @@ STEX_TP           = get("STEX_TP", "1")                  # 1:KRX 2:NXT 3:통합
 MARKET_OPEN_HM    = int(get("MARKET_OPEN_HM", "540"))    # 09:00 = 9*60
 MARKET_CLOSE_HM   = int(get("MARKET_CLOSE_HM", "930"))   # 15:30 = 15*60+30
 NO_ALERT_FIRST_MIN = int(get("NO_ALERT_FIRST_MIN", "15")) # 장 초반 N분 알람 보류(변동성 구간)
+# 2026-06-09: 누적 5영업일 분석 결과 09시대 외 시간대(10~15시) 신호 5건 평균 -0.45%. 컷.
+ALERT_LATE_CUT_HM  = int(get("ALERT_LATE_CUT_HM", "600"))  # 10:00=10*60. 이후 신호 컷
