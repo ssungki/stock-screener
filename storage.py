@@ -33,6 +33,29 @@ CREATE TABLE IF NOT EXISTS alerts (
     UNIQUE(date_kst, time_kst, code)
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_date ON alerts(date_kst);
+
+-- 2026-06-14: 종가베팅 paper trading 1개월 검증용.
+-- 매수일(저항+4% 신호 발생일) 종가 매수 → 익일 시초가 매도.
+CREATE TABLE IF NOT EXISTS paper_trades (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    buy_date_kst    TEXT NOT NULL,        -- 신호일/매수일 YYYYMMDD
+    code            TEXT NOT NULL,
+    name            TEXT,
+    signal_kind     TEXT,                 -- RESIST4 / BOX / TREND
+    buy_price       REAL NOT NULL,        -- 신호일 종가
+    pct_above_resist REAL,                -- 신호 시점 저항 대비 %
+    sell_date_kst   TEXT,                 -- 매도일(보통 buy_date+1영업일)
+    sell_price      REAL,                 -- 익일 시초가
+    return_pct      REAL,                 -- (sell-buy)/buy*100
+    return_pct_net  REAL,                 -- 수수료 0.4% 차감
+    capital_share   REAL,                 -- 그날 자본 중 이 거래 비중(0~1)
+    status          TEXT,                 -- OPEN / CLOSED
+    created_at      INTEGER,
+    closed_at       INTEGER,
+    UNIQUE(buy_date_kst, code)
+);
+CREATE INDEX IF NOT EXISTS idx_paper_buy_date ON paper_trades(buy_date_kst);
+CREATE INDEX IF NOT EXISTS idx_paper_status ON paper_trades(status);
 """
 
 
@@ -88,6 +111,77 @@ def update_outcomes(date_kst, code, time_kst, **fields):
                 vals + [date_kst, time_kst, code])
     except Exception as e:
         print(f"[storage] update_outcomes 실패: {e}", flush=True)
+
+
+FEE_PCT = 0.4  # 매수+매도 수수료/세금 합 약 0.4% (한국 주식 기준)
+
+
+def open_paper_trade(buy_date_kst, code, name, signal_kind, buy_price,
+                     pct_above_resist=None, capital_share=1.0):
+    """신호 발생일 종가에 paper 매수 기록. 중복(같은 날·종목)은 무시."""
+    try:
+        with _conn() as c:
+            c.execute(
+                "INSERT OR IGNORE INTO paper_trades "
+                "(buy_date_kst, code, name, signal_kind, buy_price, "
+                " pct_above_resist, capital_share, status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)",
+                (buy_date_kst, code, name, signal_kind, buy_price,
+                 pct_above_resist, capital_share, int(_time.time()))
+            )
+    except Exception as e:
+        print(f"[storage] open_paper_trade 실패: {e}", flush=True)
+
+
+def close_paper_trade(buy_date_kst, code, sell_date_kst, sell_price):
+    """익일 시초가에 paper 매도 기록 + 수익률 계산. 이미 CLOSED 면 무시."""
+    try:
+        with _conn() as c:
+            cur = c.execute(
+                "SELECT buy_price FROM paper_trades "
+                "WHERE buy_date_kst=? AND code=? AND status='OPEN'",
+                (buy_date_kst, code))
+            row = cur.fetchone()
+            if not row:
+                return False
+            buy_price = row[0]
+            ret = (sell_price - buy_price) / buy_price * 100
+            net = ret - FEE_PCT
+            c.execute(
+                "UPDATE paper_trades SET sell_date_kst=?, sell_price=?, "
+                "return_pct=?, return_pct_net=?, status='CLOSED', closed_at=? "
+                "WHERE buy_date_kst=? AND code=?",
+                (sell_date_kst, sell_price, ret, net, int(_time.time()),
+                 buy_date_kst, code))
+            return True
+    except Exception as e:
+        print(f"[storage] close_paper_trade 실패: {e}", flush=True)
+        return False
+
+
+def fetch_paper_trades(status=None, since_date=None):
+    """paper 거래 조회. status='OPEN'/'CLOSED' 또는 None(전체). since_date=YYYYMMDD."""
+    try:
+        with _conn() as c:
+            sql = ("SELECT id, buy_date_kst, code, name, signal_kind, buy_price, "
+                   "pct_above_resist, sell_date_kst, sell_price, return_pct, "
+                   "return_pct_net, capital_share, status, created_at, closed_at "
+                   "FROM paper_trades")
+            params = []
+            where = []
+            if status:
+                where.append("status=?"); params.append(status)
+            if since_date:
+                where.append("buy_date_kst>=?"); params.append(since_date)
+            if where:
+                sql += " WHERE " + " AND ".join(where)
+            sql += " ORDER BY buy_date_kst, code"
+            cur = c.execute(sql, params)
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+    except Exception as e:
+        print(f"[storage] fetch_paper_trades 실패: {e}", flush=True)
+        return []
 
 
 def recent_dates(limit=14):

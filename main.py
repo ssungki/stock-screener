@@ -202,6 +202,95 @@ def post_breakout_scan(token):
         notifier.notify(text)
 
 
+def paper_open(token, capital=10_000_000):
+    """모의 매수(paper trading) — 매일 마감 후(15:35) 호출.
+
+    그날 일봉 돌파 스캔의 RESIST4(저항+4% 종가베팅) 신호만 paper 매수 기록.
+    1년 백테스트로 PF 5.48 검증된 룰만 모의 운영.
+    capital_share = 1 / 신호수 (균등 분산).
+    """
+    today_str = datetime.now(KST).strftime("%Y%m%d")
+    today_display = datetime.now(KST).strftime("%Y-%m-%d")
+    hits = scan_daily_breakouts(token)
+    # RESIST4 신호만 선별
+    r4 = [h for h in hits if h["kind"] == "RESIST4"]
+    if not r4:
+        notifier.send_discord(
+            f"📋 **[Paper {today_display}] 매수 신호 없음** — 저항+4% 신호 발생 0건. 오늘 paper 매매 X.")
+        return
+    share = 1.0 / len(r4)
+    lines = [f"📋 **[Paper {today_display}] 매수 {len(r4)}건** (가상 자본 {capital:,}원 균등 분산)"]
+    for h in r4:
+        s = h["sig"]
+        storage.open_paper_trade(
+            today_str, h["code"], h["name"], "RESIST4",
+            s["close"], s.get("pct_above_resist"), share)
+        lines.append(
+            f"  ⭐ {h['name']} ({h['code']}) — 종가 {int(s['close']):,}원 매수 "
+            f"(+{s['pct_above_resist']}% / 저항선 {int(s['resistance']):,})")
+    lines.append(f"\n→ 다음 거래일 09:05 시초가 매도 예정.")
+    notifier.send_discord("\n".join(lines))
+    print("\n".join(lines), flush=True)
+
+
+def paper_close(token, capital=10_000_000):
+    """모의 매도 — 매일 시초가 직후(09:05) 호출.
+
+    어제 OPEN 상태인 paper 거래의 시초가를 현재 1분봉으로 fetch → 매도 기록.
+    오늘 첫 거래일 시초가는 fetch_intraday_bars(tic=1)의 첫 봉 종가로 근사.
+    """
+    open_trades = storage.fetch_paper_trades(status="OPEN")
+    if not open_trades:
+        notifier.send_discord("📋 **[Paper 매도] OPEN 거래 0건.** 청산할 거 없음.")
+        return
+    today_str = datetime.now(KST).strftime("%Y%m%d")
+    today_display = datetime.now(KST).strftime("%Y-%m-%d")
+    lines = [f"📋 **[Paper {today_display}] 시초가 매도 {len(open_trades)}건**"]
+    total_cap_ret = 0.0
+    for t in open_trades:
+        # 1분봉 첫 봉 종가 = 시초가 근사
+        try:
+            bars = kiwoom.fetch_intraday_bars(token, t["code"], tic=1, count=10)
+            time.sleep(config.REQ_DELAY_SEC)
+            if not bars:
+                lines.append(f"  ⚠️ {t['name']} ({t['code']}) — 분봉 데이터 없음, 청산 보류")
+                continue
+            sell_price = float(bars[0][1])  # 첫 봉 종가 = 시초가 근사
+            ok = storage.close_paper_trade(t["buy_date_kst"], t["code"], today_str, sell_price)
+            if not ok:
+                continue
+            ret = (sell_price - t["buy_price"]) / t["buy_price"] * 100
+            net = ret - 0.4  # 수수료
+            cap_contrib = net * t.get("capital_share", 1.0)
+            total_cap_ret += cap_contrib
+            emoji = "🟢" if net >= 0 else "🔴"
+            lines.append(
+                f"  {emoji} {t['name']} ({t['code']}) — 매수 {int(t['buy_price']):,} → 시초 {int(sell_price):,} "
+                f"= {ret:+.2f}% (수수료차감 {net:+.2f}%, 자본기여 {cap_contrib:+.2f}%)")
+        except Exception as e:
+            lines.append(f"  ⚠️ {t['name']} ({t['code']}) — 처리 오류: {e}")
+    lines.append(f"\n→ 오늘 자본 변동: **{total_cap_ret:+.2f}%**")
+    # 누적 P&L
+    all_closed = storage.fetch_paper_trades(status="CLOSED")
+    if all_closed:
+        wins = sum(1 for x in all_closed if (x.get("return_pct_net") or 0) > 0)
+        avg = sum(x.get("return_pct_net") or 0 for x in all_closed) / len(all_closed)
+        cap = capital
+        # 일자별 자본 누적 (간단)
+        by_date = {}
+        for x in all_closed:
+            by_date.setdefault(x["buy_date_kst"], []).append(x)
+        for d in sorted(by_date.keys()):
+            day_ret = sum((x.get("return_pct_net") or 0) * (x.get("capital_share") or 1.0)
+                          for x in by_date[d])
+            cap *= (1 + day_ret / 100)
+        lines.append(f"📊 **누적 paper 결과** — 청산 {len(all_closed)}건 / 승 {wins}/{len(all_closed)} = "
+                     f"{wins/len(all_closed)*100:.1f}% / 평균 {avg:+.2f}% / "
+                     f"자본 {capital:,} → {cap:,.0f}원 ({(cap/capital-1)*100:+.2f}%)")
+    notifier.send_discord("\n".join(lines))
+    print("\n".join(lines), flush=True)
+
+
 def post_total_report():
     """봇 시작일~오늘까지 SQLite 전체 알람을 한 번에 집계. 2026-06-08 사장님 요청.
 
@@ -521,6 +610,14 @@ def main():
     if arg == "post_total_report":
         # python main.py post_total_report  — 봇 첫날~오늘 누적 통계
         post_total_report()
+        return
+    if arg == "paper_open":
+        # python main.py paper_open  — 마감 후(15:35) 그날 RESIST4 신호 paper 매수
+        paper_open(token)
+        return
+    if arg == "paper_close":
+        # python main.py paper_close  — 시초가(09:05) OPEN 거래 시초가 매도
+        paper_close(token)
         return
     if arg == "post_breakout_scan":
         # python main.py post_breakout_scan  — 일봉 박스/추세선 돌파 스캔 → ntfy+디스코드

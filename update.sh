@@ -57,7 +57,7 @@ done
 if [ -d "$APPDIR/triggers" ]; then
     PROCESSED="$APPDIR/.processed_triggers"
     touch "$PROCESSED"
-    ALLOWED="post_daily_report post_weekly_report post_total_report post_breakout_scan backfill"
+    ALLOWED="post_daily_report post_weekly_report post_total_report post_breakout_scan backfill paper_open paper_close"
     shopt -s nullglob
     for flag in "$APPDIR"/triggers/*.flag; do
         base="$(basename "$flag")"

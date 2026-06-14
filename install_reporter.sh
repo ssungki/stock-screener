@@ -87,11 +87,65 @@ Unit=stock-screener-weekly.service
 WantedBy=timers.target
 EOF
 
+# ── Paper Trading 매수(평일 15:45 KST = 06:45 UTC, 일봉 돌파 스캔 5분 뒤) ──
+sudo tee /etc/systemd/system/stock-screener-paper-open.service >/dev/null <<EOF
+[Unit]
+Description=Stock Screener Paper Trading Open (저항+4% 신호 매수)
+
+[Service]
+Type=oneshot
+User=$SVC_USER
+WorkingDirectory=$APPDIR
+ExecStart=$APPDIR/.venv/bin/python $APPDIR/main.py paper_open
+StandardOutput=journal
+StandardError=journal
+EOF
+sudo tee /etc/systemd/system/stock-screener-paper-open.timer >/dev/null <<EOF
+[Unit]
+Description=Stock Screener Paper Open Timer (Mon-Fri 15:45 KST)
+
+[Timer]
+OnCalendar=Mon..Fri 06:45:00 UTC
+Persistent=true
+Unit=stock-screener-paper-open.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+# ── Paper Trading 매도(평일 09:05 KST = 00:05 UTC) ──
+sudo tee /etc/systemd/system/stock-screener-paper-close.service >/dev/null <<EOF
+[Unit]
+Description=Stock Screener Paper Trading Close (시초가 매도)
+
+[Service]
+Type=oneshot
+User=$SVC_USER
+WorkingDirectory=$APPDIR
+ExecStart=$APPDIR/.venv/bin/python $APPDIR/main.py paper_close
+StandardOutput=journal
+StandardError=journal
+EOF
+sudo tee /etc/systemd/system/stock-screener-paper-close.timer >/dev/null <<EOF
+[Unit]
+Description=Stock Screener Paper Close Timer (Mon-Fri 09:05 KST)
+
+[Timer]
+OnCalendar=Mon..Fri 00:05:00 UTC
+Persistent=true
+Unit=stock-screener-paper-close.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now stock-screener-reporter.timer
 sudo systemctl enable --now stock-screener-breakout.timer
 sudo systemctl enable --now stock-screener-weekly.timer
+sudo systemctl enable --now stock-screener-paper-open.timer
+sudo systemctl enable --now stock-screener-paper-close.timer
 
-echo "=== 리포트 타이머 설치 완료 (일일 15:35 / 일봉돌파 15:40 / 주간 금 16:00 KST) ==="
+echo "=== 리포트 타이머 설치 완료 (일일 15:35 / 일봉돌파 15:40 / paper매수 15:45 / paper매도 09:05 / 주간 금 16:00 KST) ==="
 systemctl list-timers --no-pager | grep stock-screener || true
 echo "=== REPORTER_DONE ==="
