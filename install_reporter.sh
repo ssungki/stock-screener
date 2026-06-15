@@ -87,7 +87,9 @@ Unit=stock-screener-weekly.service
 WantedBy=timers.target
 EOF
 
-# ── Paper Trading 매수(평일 15:45 KST = 06:45 UTC, 일봉 돌파 스캔 5분 뒤) ──
+# ── Paper Trading 매수(평일 15:10 KST = 06:10 UTC, 정규 매매시간 내) ──
+# 실거래(15:00~15:15)와 동일한 흐름으로 paper 시뮬. 15:20부터는 동시호가라
+# 즉시 체결 불가능 → 15:10이 종가매수 정공법.
 sudo tee /etc/systemd/system/stock-screener-paper-open.service >/dev/null <<EOF
 [Unit]
 Description=Stock Screener Paper Trading Open (저항+4% 신호 매수)
@@ -102,10 +104,10 @@ StandardError=journal
 EOF
 sudo tee /etc/systemd/system/stock-screener-paper-open.timer >/dev/null <<EOF
 [Unit]
-Description=Stock Screener Paper Open Timer (Mon-Fri 15:45 KST)
+Description=Stock Screener Paper Open Timer (Mon-Fri 15:10 KST)
 
 [Timer]
-OnCalendar=Mon..Fri 06:45:00 UTC
+OnCalendar=Mon..Fri 06:10:00 UTC
 Persistent=true
 Unit=stock-screener-paper-open.service
 
@@ -146,6 +148,6 @@ sudo systemctl enable --now stock-screener-weekly.timer
 sudo systemctl enable --now stock-screener-paper-open.timer
 sudo systemctl enable --now stock-screener-paper-close.timer
 
-echo "=== 리포트 타이머 설치 완료 (일일 15:35 / 일봉돌파 15:40 / paper매수 15:45 / paper매도 09:05 / 주간 금 16:00 KST) ==="
+echo "=== 리포트 타이머 설치 완료 (일일 15:35 / 일봉돌파 15:40 / paper매수 15:10 / paper매도 09:05 / 주간 금 16:00 KST) ==="
 systemctl list-timers --no-pager | grep stock-screener || true
 echo "=== REPORTER_DONE ==="
